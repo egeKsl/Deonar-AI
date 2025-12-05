@@ -1,0 +1,12 @@
+*.mp4
+*.json
+*.jsonl
+.venv/
+.vscode/
+__pycache__/
+*.pyc
+*.csv
+*.jpg
+*.png
+logs/
+outputs/

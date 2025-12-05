@@ -1,0 +1,196 @@
+# Goat Detection & Counting — unified YAML config
+# Notes:
+# - All paths can be absolute OR relative to project root.
+# - If a path is relative and looks like a filename (e.g. best.pt), code should
+#   resolve them into the conventional folders described in comments below.
+# - Keep ONE source of truth for "live": runtime.live (logger also reads this).
+
+version: 1
+
+# ------------------------------
+# Geometry / ROI (relative coordinates)
+# ------------------------------
+# ROI rectangle expressed as relative ratios [0..1] against the full frame.
+# XR, YR = top-left corner (normalized), WR, HR = width & height (normalized).
+# Example values (your existing constants):
+# XR=0.2438, YR=0.0000, WR=0.5489, HR=1.0000
+geometry:
+  # Relative ROI rectangle (normalized coords, 0..1)
+  roi:
+    xr: 0.2438     # left  (fraction of full-frame width)
+    yr: 0.0000     # top   (fraction of full-frame height)
+    wr: 0.5489     # width (fraction of full-frame width)
+    hr: 1.0000     # height(fraction of full-frame height)
+
+  # NOTE: counting.line_roi and counting.zone.rect are ROI-relative coordinates
+  # (i.e., they operate inside the ROI coordinate space). Example:
+  # - a line "0.5,0.2,0.5,0.8" means 50% across the ROI width and 20% -> 80% down the ROI height.
+
+# ------------------------------
+# Runtime & I/O orchestration
+# ------------------------------
+runtime:
+  live: false
+  quiet: false
+  verbose: false
+
+  # pacing / time-base
+  sync: true                         # enable time-based pacing
+  playback_speed: 1.0                # how fast to play relative to source
+  autoskip: false                     # enable autoskip behavior when lagging
+  max_lag_s: 0.75                    # if behind by > this, autoskip policy kicks in
+
+  # pacing tuning
+  sync_jitter_allowance_s: 0.02      # small positive jitter allowed before sleeping
+  max_sleep_s: 1.0                   # max sleep chunk when waiting
+  skip_policy: drop_oldest        # drop_to_latest | drop_oldest
+  max_catchup_resync_s: 5.0          # if too far behind, resync anchor to latest
+
+  # queue / thread sizing
+  cap_qsize: 3
+  res_qsize: 12
+
+  # capture startup waits (runner)
+  cap_info_wait_timeout: 6.0
+  cap_info_poll_interval: 0.05
+
+  # UI
+  no_roi: true
+  no_full: false
+
+  save_out: ""
+
+# ------------------------------
+# Paths / Inputs
+# ------------------------------
+paths:
+  # If relative:
+  #   - weights resolves under models/
+  #   - source  resolves under data/  (unless it looks like rtsp/http)
+  weights: best_latest.pt
+  source: rtsp://127.0.0.1:8554/mystream
+
+# ------------------------------
+# Inference (YOLO / Ultralytics)
+# ------------------------------
+inference:
+  device: "0"           # "cpu" | "0"/"cuda:0" | "1"/"cuda:1" | "auto"
+  half: true            # FP16 on CUDA; auto-disabled on CPU
+  fuse: true            # fuse Conv+BN for speed
+  imgsz: 1024
+  conf: 0.25
+  iou: 0.45
+
+# ------------------------------
+# Tracking (ByteTrack)
+# ------------------------------
+tracking:
+  bytetrack:
+    profile: default    # default | crowd | very_crowd
+    high: ~             # explicit override or null to use preset/default
+    low: ~
+    new: ~
+    match: ~
+    buffer: ~
+    min_area: ~
+    mot20: false
+
+# ------------------------------
+# Counting pipeline
+# ------------------------------
+counting:
+  mode: line            # line | zone
+
+  # ---- line counting ----
+  # ROI-relative line(s) in ratios [0..1]: "ax,ay,bx,by" ; multiple lines separated by ';'
+  line_roi: "0.2627,0.311,0.6923,0.311"
+
+  # ---- zone counting ----
+  zone:
+    rect: "0.25,0.12,0.50,0.3"     # rx,ry,rw,rh in ROI-relative ratios
+    born_inside: count_entry       # ignore | count_entry
+    backfill_wait: 4               # frames before back-projection
+    near_border_px: 24             # acceptance radius to zone border for inferred entry
+
+  # ---- dual-line mode inside ROI ----
+  dual:
+    enabled: true                  # true/false
+    mode: recover                  # verify | recover
+    offset_px: 150                 # vertical Δ between A & B (px in ROI)
+    thick_px: 2                    # draw thickness only (doesn't alter logic)
+    hyst_frames: 2                 # side confirmation anti-flicker per line
+    window_frames: 80              # A→B pairing window (verify mode)
+    id_lock_frames: 60             # cooldown per track id after a count
+    width_px: 550                  # visual span of B (px), centered on A midpoint
+
+  # ---- anti-flicker & filters ----
+  antiflicker:
+    min_age: 60                    # min track age (frames) to be eligible to count
+    min_side_frames: 2             # consecutive side samples to confirm side
+    cooldown_frames: 15            # min frames between counts per track
+    line_margin_px: 8              # ignore near-line points within this pixel margin
+
+  filters:
+    min_area_ratio: 0.003          # drop tiny detections (ROI area ratio)
+
+  classes: ""                     # "", "goat", "0,2", "goat,sheep", etc.
+
+# ------------------------------
+# Visualization / Styling
+# ------------------------------
+viz:
+  mode: centroid                   # bbox | centroid | auto
+  crowd_switch: 6                  # if mode=auto and detections>=N -> centroid
+  box_radius: 6
+  box_thick: 2
+  fill_alpha: 0.22
+  font_scale: 0.8
+  centroid_radius: 5
+
+  # Count color behavior
+  count_box_mode: persist          # persist | window | off
+  count_box_frames: 120            # used if mode=window
+
+  # Colors (B,G,R 0..255)
+  counted_bgr: [255, 0, 0]         # blue-ish for counted
+  base_bgr:    [0, 255, 0]         # green for normal
+
+# ------------------------------
+# Debug toggles (visuals/logs)
+# ------------------------------
+debug:
+  enabled: true
+  backproj_vis: true
+  trace: true
+  trail_len: 20
+
+# ------------------------------
+# CSV outputs (filenames OK)
+# Code should resolve to:
+#   outputs/events/   and   outputs/timeseries/
+# ------------------------------
+csv:
+  events: goat_cross_events.csv
+  timeseries: goat_counts_timeseries.csv
+  metrics: goat_metrics.csv
+
+# ------------------------------
+# Logging (no separate 'live' here; uses runtime.live)
+# ------------------------------
+logging:
+  dir: logs
+  file: logs/log.jsonl
+  max_bytes: 5242880
+  backup_count: 3
+  queue_max: 8192        # for queue-based logger impls (if used)
+  show_banner: true
+
+
+# ------------------------------
+# WebSocket server
+# ------------------------------
+ws:
+  enable: true
+  host: "0.0.0.0"
+  port: 8081
+  jpeg_quality: 80
