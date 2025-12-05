@@ -1,11 +1,14 @@
 # src/utils/metrics.py
 from __future__ import annotations
+from sys import exc_info
 import threading
 import time
 import collections
-import statistics
+from src.utils.logger import log
 import csv
 from typing import Dict, Any, Optional
+import os
+import traceback
 
 
 class MetricsCollector:
@@ -15,32 +18,70 @@ class MetricsCollector:
     """
 
     def __init__(self, csv_path: str = "metrics.csv"):
+
         self.lock = threading.Lock()
-        # store events per frame_id: {frame_id: {event_name: (ts, extra)}}
-        self._events: Dict[int, Dict[str, Any]] = {}
-        # counters for drops
-        self.counters = collections.Counter()
-        self.csv_path = csv_path
         self._csv_lock = threading.Lock()
-        # write header
+
+        # Store events per frame_id: {frame_id: {event_name: (ts, extra)}}
+        self._events: Dict[int, Dict[str, Any]] = {}
+        self.counters = collections.Counter()
+
+        # --- 1) Normalize path (handles whitespace, slashes, yaml weirdness) ---
         try:
-            with open(self.csv_path, "w", newline="") as f:
-                w = csv.writer(f)
-                w.writerow(
-                    [
-                        "frame_id",
-                        "captured",
-                        "pacer_emit",
-                        "infer_start",
-                        "infer_end",
-                        "result_queued",
-                        "display_shown",
-                        "e2e_ms",
-                        "infer_ms",
-                    ]
-                )
-        except Exception:
-            pass
+            clean_path = str(csv_path).strip()
+            clean_path = os.path.expanduser(clean_path)
+            clean_path = os.path.abspath(clean_path)
+            clean_path = os.path.normpath(clean_path)
+            self.csv_path = clean_path
+        except Exception as e:
+            log.error("MetricsCollector",
+                        f"❌ Failed to normalize CSV path '{csv_path}': {e}")
+            raise RuntimeError(f"Invalid metrics path: {csv_path}")
+
+        # --- 2) Ensure parent directory exists ---
+        parent = os.path.dirname(self.csv_path) or "."
+        try:
+            if not os.path.exists(parent):
+                os.makedirs(parent, exist_ok=True)
+                log.info("MetricsCollector",
+                        f"📁 Created metrics directory: {parent}")
+        except Exception as e:
+            tb = traceback.format_exc()
+            log.error("MetricsCollector",
+                    f"❌ Failed to create metrics directory '{parent}': {e}")
+            log.debug("MetricsCollector", tb)
+            raise RuntimeError(
+                f"Cannot create metrics directory '{parent}': {e}"
+            )
+
+        # --- 3) Open CSV safely and write header ---
+        try:
+            with open(self.csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "frame_id",
+                    "captured",
+                    "pacer_emit",
+                    "infer_start",
+                    "infer_end",
+                    "result_queued",
+                    "display_shown",
+                    "e2e_ms",
+                    "infer_ms",
+                ])
+
+            log.info("MetricsCollector",
+                    f"🟢 Metrics CSV initialized at: {self.csv_path}")
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            log.error("MetricsCollector",
+                    f"❌ Failed to initialize CSV at {self.csv_path}: {e}")
+            log.debug("MetricsCollector", tb)
+            raise RuntimeError(
+                f"Failed to initialize metrics CSV '{self.csv_path}': {e}"
+            )
+
 
     def mark(
         self,

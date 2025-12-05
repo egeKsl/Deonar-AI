@@ -253,43 +253,132 @@ class WSPublisher:
 <body style="font-family:Arial,Helvetica,sans-serif">
 <h3>WSPublisher Demo</h3>
 <canvas id="c" style="max-width:100%;border:1px solid #333;"></canvas><br/>
-<button onclick="sendCmd('screenshot')">Screenshot</button>
-<button onclick="sendCmd('quit')">Quit</button>
-<select id="quality" onchange="setQuality(this.value)">
+<button id="btn_screenshot">Screenshot</button>
+<button id="btn_quit">Quit</button>
+<select id="quality">
   <option value="80">Quality 80</option>
   <option value="60">Quality 60</option>
   <option value="40">Quality 40</option>
 </select>
-<span id="status"></span>
+<span id="status" style="margin-left:12px;"></span>
 <script>
   const status = document.getElementById('status');
-  const ws = new WebSocket("ws://" + location.host + "/ws");
-  ws.binaryType = 'arraybuffer';
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
+  const btnScreenshot = document.getElementById('btn_screenshot');
+  const btnQuit = document.getElementById('btn_quit');
+  const selQuality = document.getElementById('quality');
+
+  let ws = new WebSocket("ws://" + location.host + "/ws");
+  ws.binaryType = 'arraybuffer';
+
+  // helper to disable UI once server closes
+  function disableUI(reason) {
+    try {
+      btnScreenshot.disabled = true;
+      btnQuit.disabled = true;
+      selQuality.disabled = true;
+    } catch (e) {}
+    if (reason) {
+      status.innerText = reason;
+    }
+  }
+
   ws.onopen = () => { status.innerText = 'connected'; };
-  ws.onclose = () => { status.innerText = 'closed'; };
   ws.onerror = (e) => { status.innerText = 'error'; console.error(e); };
+
+  // onclose: display closed and disable UI
+  ws.onclose = (evt) => {
+    // If we already showed server_shutdown, keep that message.
+    if (!status.innerText || status.innerText === 'connected' || status.innerText === 'error') {
+      status.innerText = 'closed';
+    }
+    disableUI();
+  };
+
+  // onmessage: handle JSON control messages (text) and binary frames
   ws.onmessage = (evt) => {
+    // Text messages: JSON commands from server
     if (typeof evt.data === 'string') {
-      try { const obj = JSON.parse(evt.data); console.log('json-msg', obj); } catch(e){}
+      try {
+        const obj = JSON.parse(evt.data);
+        console.log('json-msg', obj);
+
+        // server_shutdown: show friendly banner and close the socket
+        if (obj && obj.cmd === 'server_shutdown') {
+          const reason = obj.reason ? ` — ${obj.reason}` : '';
+          status.innerText = 'Server closed' + reason;
+          // Stop rendering further frames and close socket
+          try { ws.close(); } catch(e){}
+          disableUI('Server closed' + reason);
+          return;
+        }
+
+        // other JSON messages can be handled here if needed
+      } catch (e) {
+        // not JSON or parse error — ignore
+      }
       return;
     }
-    const blob = new Blob([evt.data], {type: 'image/jpeg'});
-    const img = new Image();
-    img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(img.src);
-    };
-    img.src = URL.createObjectURL(blob);
+
+    // Binary frames: JPEG bytes
+    try {
+      const blob = new Blob([evt.data], {type: 'image/jpeg'});
+      const img = new Image();
+      img.onload = () => {
+        // draw image to canvas
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(img.src);
+      };
+      img.src = URL.createObjectURL(blob);
+    } catch (e) {
+      console.error('frame decode error', e);
+    }
   };
-  function sendCmd(cmd) { ws.send(JSON.stringify({cmd:cmd})); }
-  function setQuality(q) { ws.send(JSON.stringify({cmd:'set_quality', quality: parseInt(q)})); }
+
+  // Safe send: only send if ws is open
+  function safeSend(obj) {
+    try {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(obj));
+        return true;
+      } else {
+        console.warn('WebSocket not open — cannot send', obj);
+        return false;
+      }
+    } catch (e) {
+      console.warn('send failed', e);
+      return false;
+    }
+  }
+
+  // UI bindings
+  btnScreenshot.addEventListener('click', () => {
+    const ok = safeSend({cmd:'screenshot'});
+    if (!ok) status.innerText = 'cannot send: disconnected';
+  });
+
+  btnQuit.addEventListener('click', () => {
+    // ask server to quit; server will broadcast server_shutdown and close
+    const ok = safeSend({cmd:'quit'});
+    if (!ok) {
+      status.innerText = 'cannot send quit: disconnected';
+      disableUI('Disconnected');
+    } else {
+      status.innerText = 'quitting...';
+    }
+  });
+
+  selQuality.addEventListener('change', (e) => {
+    const q = parseInt(e.target.value || 80, 10);
+    safeSend({cmd: 'set_quality', quality: q});
+  });
 </script>
 </body>
 </html>
+
 """
         return web.Response(text=html, content_type="text/html")
 
@@ -304,6 +393,7 @@ class WSPublisher:
                 "ok": True,
                 "clients": len(self._clients),
                 "have_frame": bool(have_frame),
+                "closing": bool(self._closing.is_set()),
                 "metrics": self._metrics,
             }
             return web.json_response(info)
@@ -555,6 +645,18 @@ class WSPublisher:
         try:
             log.debug("WSPUBLISHER", "Shutdown requested (async)")
             self._closing.set()
+            # Try to broadcast a final shutdown message to all clients (best-effort)
+            try:
+                await self._broadcast_json(
+                    {"cmd": "server_shutdown", "reason": "server_shutdown"}
+                )
+            except Exception:
+                log.debug(
+                    "WSPUBLISHER",
+                    "Final shutdown broadcast failed: " + traceback.format_exc(),
+                )
+
+            # cancel bcast task if present
             try:
                 if hasattr(self, "_bcast_task"):
                     self._bcast_task.cancel()
@@ -564,6 +666,7 @@ class WSPublisher:
                         pass
             except Exception:
                 pass
+            # close clients
             for ws in list(self._clients):
                 try:
                     await ws.close(

@@ -502,21 +502,45 @@ class DisplayWorker(threading.Thread):
                         try:
                             ctrl_q = self.injected.get("ws_control_q")
                             if ctrl_q is not None:
-                                # non-blocking drain of any pending control messages
                                 while True:
                                     try:
                                         cmd = ctrl_q.get_nowait()
                                     except Exception:
                                         break
-                                    # expected structure: {"cmd":"screenshot"} or {"cmd":"quit"} etc.
                                     try:
                                         if isinstance(cmd, dict) and cmd.get("cmd") == "screenshot":
-                                            # save screenshot
-                                            _save_screenshot(full_disp, getattr(self.args,"source",None), getattr(feeder,"out_index",None))
+                                            _save_screenshot(full_disp, getattr(self.args, "source", None), getattr(feeder, "out_index", None))
                                         elif isinstance(cmd, dict) and cmd.get("cmd") == "quit":
+                                            # 1) broadcast a shutdown notification to web clients (non-blocking)
+                                            try:
+                                                if ws_pub is not None:
+                                                    # publish_json schedules the send on the publisher loop
+                                                    ws_pub.publish_json({"cmd": "server_shutdown", "reason": "user_quit"})
+                                            except Exception:
+                                                log.debug("DISPLAY-WORKER", "ws_pub.publish_json failed: " + traceback.format_exc())
+
+                                            # 2) signal the whole pipeline to stop
                                             self.stop_event.set()
+
+                                            # 3) close the publisher in background (don't block display thread)
+                                            try:
+                                                if ws_pub is not None:
+                                                    import threading as _thr
+
+                                                    def _close_pub():
+                                                        try:
+                                                            # allow a small grace for the JSON to be delivered
+                                                            time.sleep(0.15)
+                                                            ws_pub.close(timeout=1.5)
+                                                        except Exception:
+                                                            log.debug("DISPLAY-WORKER", "ws_pub.close failed: " + traceback.format_exc())
+
+                                                    _thr.Thread(target=_close_pub, name="ws_pub_close", daemon=True).start()
+                                            except Exception:
+                                                log.debug("DISPLAY-WORKER", "failed to spawn ws_pub close thread: " + traceback.format_exc())
+
                                     except Exception:
-                                        log.debug("DISPLAY-WORKER","control cmd failed: "+traceback.format_exc())
+                                        log.debug("DISPLAY-WORKER", "control cmd failed: " + traceback.format_exc())
                         except Exception:
                             log.debug("DISPLAY-WORKER","control queue handling failed: "+traceback.format_exc())
 
