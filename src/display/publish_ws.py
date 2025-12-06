@@ -478,150 +478,135 @@ class WSPublisher:
 
     # ---------------- broadcaster (core) ----------------
     async def _broadcaster(self):
-        """Periodically send latest frame (binary JPEG) to all clients.
+        """
+        Periodically send latest frame (binary JPEG) to all clients.
 
-        This loop will:
-        - encode frame if needed and cache the bytes
-        - only broadcast when there's a new frame (new frame_seq) OR when heartbeat forces a resend
-        - per-client send uses a short timeout; slow/blocked clients are dropped
+        - Pre-encodes frame once per loop.
+        - Resizes frames (optional) to remote_max_w x remote_max_h to reduce bandwidth.
+        - Uses asyncio.wait_for on send_bytes to avoid blocking forever.
+        - Drops clients that fail to receive quickly.
+        - Adapts jpeg_quality / broadcast_interval when network is slow.
         """
         log.debug("WSPUBLISHER", "Broadcaster started")
+        # tuning knobs (expose as ctor args if you like)
+        remote_max_w = getattr(self, "remote_max_w", 640)  # scale down for remote viewers
+        remote_max_h = getattr(self, "remote_max_h", 360)
+        min_jpeg = 30
+        max_jpeg = max(10, min(95, int(self.jpeg_quality)))
+        quality = max_jpeg
+        send_timeout = 0.35  # seconds to wait for a single client's send
+        adapt_check_period = 5.0  # seconds between adapt checks
+        samples = []
+        last_adapt = time.monotonic()
+
         try:
             while not self._closing.is_set():
+                start_loop = time.perf_counter()
                 encoded = None
-                seq = None
 
-                # snapshot of latest encoded/cached bytes and sequence
+                # Grab latest frame/encoded safely
                 with self._frame_lock:
-                    seq = int(self._frame_seq)
-                    encoded = self._latest_encoded
-                    # If encoded is None and we have a frame, we will encode below outside lock
-                    frame = (
-                        None
-                        if (encoded is not None)
-                        else (
-                            self._latest_frame.copy()
-                            if self._latest_frame is not None
-                            else None
-                        )
-                    )
+                    if self._latest_encoded is not None:
+                        encoded = self._latest_encoded
+                    elif self._latest_frame is not None:
+                        frame = self._latest_frame.copy()
+                    else:
+                        frame = None
 
-                # If no encoded bytes but a raw frame is present, encode once and cache
+                # If we have a raw frame, optionally resize to reduce bandwidth and encode once
                 if encoded is None and frame is not None:
                     try:
-                        # optional downscale
-                        if self._max_publish_width is not None:
-                            h, w = frame.shape[:2]
-                            if w > self._max_publish_width:
-                                scale = float(self._max_publish_width) / float(w)
-                                new_w = max(1, int(round(w * scale)))
-                                new_h = max(1, int(round(h * scale)))
-                                frame_to_enc = cv2.resize(
-                                    frame,
-                                    (new_w, new_h),
-                                    interpolation=cv2.INTER_LINEAR,
-                                )
-                            else:
-                                frame_to_enc = frame
-                        else:
-                            frame_to_enc = frame
-
-                        ok, buf = cv2.imencode(
-                            ".jpg",
-                            frame_to_enc,
-                            [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality],
-                        )
+                        h, w = frame.shape[:2]
+                        if w > remote_max_w or h > remote_max_h:
+                            scale = min(remote_max_w / float(w), remote_max_h / float(h))
+                            new_w = max(1, int(round(w * scale)))
+                            new_h = max(1, int(round(h * scale)))
+                            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
                         if ok:
                             encoded = buf.tobytes()
-                            # cache encoded bytes for reuse
-                            with self._frame_lock:
-                                # ensure no one else already encoded a newer frame
-                                if self._frame_seq == seq:
-                                    self._latest_encoded = encoded
-                                # increment encode metric
-                                self._metrics["encodes"] += 1
                     except Exception:
-                        log.debug(
-                            "WSPUBLISHER",
-                            "JPEG encode failed: " + traceback.format_exc(),
-                        )
+                        log.debug("WSPUBLISHER", "JPEG encode failed in broadcaster: " + traceback.format_exc())
+                        encoded = None
 
-                # decide whether to broadcast:
-                # - send if encoded exists AND (new seq != last_broadcast_seq)
-                # - OR if there are clients but no new seq and we want to heartbeat occasionally
-                should_broadcast = False
-                if encoded is not None:
-                    if seq != self._last_broadcast_seq:
-                        should_broadcast = True
-                    else:
-                        # heartbeat: we can choose to re-send occasionally to help late-joining clients
-                        # but we keep it infrequent (send every N intervals)
-                        # simplified: do not re-send unless there are zero broadcasts for a while
-                        should_broadcast = False
+                # If nothing to send, sleep a bit
+                if encoded is None or not self._clients:
+                    # small sleep - respects broadcast_interval but not too tight
+                    await asyncio.sleep(self.broadcast_interval)
+                    continue
 
-                if encoded is not None and should_broadcast and self._clients:
-                    to_drop = []
-                    sent_count = 0
-                    for ws in list(self._clients):
+                # Broadcast to clients, with per-client timeout
+                send_start = time.perf_counter()
+                to_drop = []
+                # create list snapshot of clients to avoid mutation while iterating
+                clients_snapshot = list(self._clients)
+                for ws in clients_snapshot:
+                    try:
+                        # send with small timeout so slow clients don't block everyone
+                        await asyncio.wait_for(ws.send_bytes(encoded), timeout=send_timeout)
+                    except Exception as e:
+                        # mark client to drop (timeout, connection reset, etc.)
+                        to_drop.append(ws)
+                # prune failed clients
+                for ws in to_drop:
+                    try:
+                        self._clients.discard(ws)
                         try:
-                            # send with a small timeout so slow clients don't block everything
-                            await asyncio.wait_for(
-                                ws.send_bytes(encoded), timeout=self.send_timeout
-                            )
-                            sent_count += 1
-                            self._metrics["bytes_sent"] += len(encoded)
-                            # record per-client last sent seq
-                            try:
-                                self._last_sent_seq_per_client[id(ws)] = seq
-                            except Exception:
-                                pass
-                        except asyncio.TimeoutError:
-                            # client too slow -> drop
-                            log.debug(
-                                "WSPUBLISHER", "Client timed out (send) -> dropping"
-                            )
-                            to_drop.append(ws)
-                        except Exception:
-                            # other send error -> drop
-                            to_drop.append(ws)
-
-                    # cleanup dropped clients
-                    for ws in to_drop:
-                        try:
-                            self._clients.discard(ws)
-                            if id(ws) in self._last_sent_seq_per_client:
-                                try:
-                                    del self._last_sent_seq_per_client[id(ws)]
-                                except Exception:
-                                    pass
-                            try:
-                                await ws.close(
-                                    code=WSCloseCode.GOING_AWAY, message=b"slow-client"
-                                )
-                            except Exception:
-                                pass
-                            self._metrics["clients_dropped"] += 1
+                            await ws.close(code=WSCloseCode.GOING_AWAY, message=b"Drop slow client")
                         except Exception:
                             pass
+                    except Exception:
+                        pass
 
-                    self._last_broadcast_seq = seq
-                    self._metrics["broadcasts"] += 1
-                    log.debug(
-                        "WSPUBLISHER",
-                        f"Broadcast seq={seq} to {sent_count}/{len(self._clients)+len(to_drop)} clients",
-                    )
-                # else: nothing to send or no new frame
+                loop_send_time = time.perf_counter() - send_start
+                samples.append(loop_send_time)
+                # keep small sample window
+                if len(samples) > 25:
+                    samples.pop(0)
 
-                # sleep for broadcast interval (adaptive: cannot go below min interval)
-                await asyncio.sleep(
-                    max(self.min_broadcast_interval, self.broadcast_interval)
-                )
+                # adaptive logic: if average send time high, lower quality or slow down broadcast
+                if time.monotonic() - last_adapt >= adapt_check_period:
+                    last_adapt = time.monotonic()
+                    avg_send = sum(samples) / max(1, len(samples))
+                    log.debug("WSPUBLISHER", f"avg_send_time={avg_send:.3f}s clients={len(self._clients)} quality={quality} interval={self.broadcast_interval}")
+                    # If send is very slow, reduce quality or increase interval
+                    if avg_send > 0.25 and quality > min_jpeg:
+                        old = quality
+                        quality = max(min_jpeg, int(quality * 0.8))
+                        log.info("WSPUBLISHER", f"Reducing jpeg quality {old}->{quality} due to avg_send_time={avg_send:.3f}s")
+                    elif avg_send < 0.08 and quality < max_jpeg:
+                        # if network has slack, gently restore quality
+                        old = quality
+                        quality = min(max_jpeg, int(quality * 1.1) + 1)
+                        if quality != old:
+                            log.debug("WSPUBLISHER", f"Increasing jpeg quality {old}->{quality}")
+
+                    # adjust interval if needed (more conservative)
+                    if avg_send > 0.40:
+                        # send slower (lower frame rate)
+                        old_i = self.broadcast_interval
+                        self.broadcast_interval = min(1.0, max(0.05, self.broadcast_interval * 1.5))
+                        log.info("WSPUBLISHER", f"Increasing broadcast_interval {old_i:.3f}->{self.broadcast_interval:.3f}")
+                    elif avg_send < 0.05:
+                        # network is fast, you can lower interval if desired (don't go below 0.01)
+                        old_i = self.broadcast_interval
+                        self.broadcast_interval = max(0.01, self.broadcast_interval * 0.9)
+                        if self.broadcast_interval != old_i:
+                            log.debug("WSPUBLISHER", f"Decreasing broadcast_interval {old_i:.3f}->{self.broadcast_interval:.3f}")
+
+                # sleep to respect broadcast_interval (account for time already spent)
+                elapsed = time.perf_counter() - start_loop
+                to_sleep = max(0.0, self.broadcast_interval - elapsed)
+                if to_sleep > 0:
+                    await asyncio.sleep(to_sleep)
+
         except asyncio.CancelledError:
             log.debug("WSPUBLISHER", "Broadcaster cancelled")
         except Exception:
             log.error("WSPUBLISHER", "Broadcaster crashed: " + traceback.format_exc())
         finally:
             log.debug("WSPUBLISHER", "Broadcaster exiting")
+
 
     # ---------------- broadcast JSON ----------------
     async def _broadcast_json(self, obj: dict):
