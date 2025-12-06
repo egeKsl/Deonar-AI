@@ -509,8 +509,8 @@ def load_config(
     cfg["csv"] = raw.get("csv", {})
     # logging
     cfg["logging"] = raw.get("logging", {})
-    # websocket
-    cfg["ws"] = raw.get("ws", {})
+    # webrtc
+    cfg["webrtc"] = raw.get("webrtc", {})
     
     # legacy_env if fallback used
     if not used_yaml:
@@ -1095,30 +1095,49 @@ def load_config(
     )
     classes = _as_str(classes_raw, default="*", allow_blank=True)
     
-    ws = cfg.get("ws", {})
-    enable_ws = _as_bool(
+    # webrtc config
+    webrtc = cfg.get("webrtc", {})
+    webrtc_enable = _as_bool(
         (
-            ws.get("enable")
+            webrtc.get("enable")
         ),
         False,
     )
-    ws_host = _as_str(
+    webrtc_host = _as_str(
         (
-            ws.get("host")
+            webrtc.get("host")
         ),
         default="0.0.0.0",
     )
-    ws_port = _as_int(
+    webrtc_port = _as_int(
         (
-            ws.get("port")
+            webrtc.get("port")
         ),
         default=8080,
     )
-    ws_jpeg_quality = _as_int(
+    webrtc_fps = _as_int(
         (
-            ws.get("jpeg_quality")
+            webrtc.get("fps")
         ),
-        default=80,
+        default=25,
+    )
+    webrtc_max_clients = _as_int(
+        (
+            webrtc.get("max_clients")
+        ),
+        default=2, 
+    )
+    webrtc_downscale_width = _as_int(
+        (
+            webrtc.get("downscale_width")
+        ),
+        default=960,
+    )
+    webrtc_downscale_height = _as_int(
+        (
+            webrtc.get("downscale_height")
+        ),
+        default=540,
     )
 
     # convert some BGRs to CSV/legacy string forms so old code expecting "0,255,0" keeps working
@@ -1216,11 +1235,14 @@ def load_config(
             "queue_max": log_queue_max,
             "show_banner": show_banner,
         },
-        "ws": {
-            "enable": enable_ws,
-            "host": ws_host,
-            "port": ws_port,
-            "jpeg_quality": ws_jpeg_quality,
+        "webrtc": {
+            "enable": webrtc_enable,
+            "host": webrtc_host,
+            "port": webrtc_port,
+            "fps": webrtc_fps,
+            "max_clients": webrtc_max_clients,
+            "downscale_width": webrtc_downscale_width,
+            "downscale_height": webrtc_downscale_height,
         },
     }
 
@@ -1325,11 +1347,14 @@ def load_config(
         roi_hr=CONFIG.get("geometry", {}).get("roi", {}).get("hr"),
         # Colors/classes
         count_classes=CONFIG["counting"]["classes"],
-        # WebSocket
-        ws_enable=CONFIG["ws"]["enable"],
-        ws_host=CONFIG["ws"]["host"],
-        ws_port=CONFIG["ws"]["port"],
-        ws_jpeg_quality=CONFIG["ws"]["jpeg_quality"],
+        # WebRTC
+        webrtc_enable=CONFIG["webrtc"]["enable"],
+        webrtc_host=CONFIG["webrtc"]["host"],
+        webrtc_port=CONFIG["webrtc"]["port"],
+        webrtc_fps=CONFIG["webrtc"]["fps"],
+        webrtc_max_clients=CONFIG["webrtc"]["max_clients"],
+        webrtc_downscale_width=CONFIG["webrtc"]["downscale_width"],
+        webrtc_downscale_height=CONFIG["webrtc"]["downscale_height"],
     )
     # Ensure logs directory exists
     try:

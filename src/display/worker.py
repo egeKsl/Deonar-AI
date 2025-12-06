@@ -471,88 +471,87 @@ class DisplayWorker(threading.Thread):
                     except Exception:
                         roi_disp = 255 * np.ones((240, 320, 3), dtype=np.uint8)
                         full_disp = roi_disp
-                    
+
                 # display / publish / handle UI events
                 try:
                     default_roi_w = min(960, rw) if rw else 640
-                    default_roi_h = (
-                        int(default_roi_w * (rh / max(1, rw))) if rw else 480
-                    )
+                    default_roi_h = int(default_roi_w * (rh / max(1, rw))) if rw else 480
                     default_full_w = min(960, W) if W else 640
                     default_full_h = int(default_full_w * (H / max(1, W))) if W else 480
 
                     shown_roi = None
                     shown_full = None
-                    # prefer ws publisher if available
-                    ws_pub = None
+
+                    # Prefer WebRTC if available
+                    webrtc_server = None
                     try:
-                        ws_pub = self.injected.get("ws_pub")
+                        webrtc_server = self.injected.get("webrtc_server")
                     except Exception:
-                        ws_pub = None
+                        webrtc_server = None
 
-                    if ws_pub is not None:
-                        # publish full frame (web client will display). Use publish() to allow publisher to encode.
+                    if webrtc_server is not None:
+                        # Push frame into WebRTC pipeline
                         try:
-                            # publish a copy or let ws_pub copy internally
-                            ws_pub.publish(full_disp)
+                            webrtc_server.publish(full_disp)
                         except Exception:
-                            log.debug("DISPLAY-WORKER", "WSPublish failed: " + traceback.format_exc())
+                            log.debug(
+                                "DISPLAY-WORKER",
+                                "WebRTC publish failed: " + traceback.format_exc(),
+                            )
 
-                        # still handle control queue (commands from web client)
+                        # Handle control commands from WebRTC client (/control -> queue)
                         try:
-                            ctrl_q = self.injected.get("ws_control_q")
+                            ctrl_q = self.injected.get("webrtc_control_q")
                             if ctrl_q is not None:
                                 while True:
                                     try:
                                         cmd = ctrl_q.get_nowait()
                                     except Exception:
                                         break
+
                                     try:
                                         if isinstance(cmd, dict) and cmd.get("cmd") == "screenshot":
-                                            _save_screenshot(full_disp, getattr(self.args, "source", None), getattr(feeder, "out_index", None))
+                                            _save_screenshot(
+                                                full_disp,
+                                                getattr(self.args, "source", None),
+                                                getattr(feeder, "out_index", None),
+                                            )
                                         elif isinstance(cmd, dict) and cmd.get("cmd") == "quit":
-                                            # 1) broadcast a shutdown notification to web clients (non-blocking)
-                                            try:
-                                                if ws_pub is not None:
-                                                    # publish_json schedules the send on the publisher loop
-                                                    ws_pub.publish_json({"cmd": "server_shutdown", "reason": "user_quit"})
-                                            except Exception:
-                                                log.debug("DISPLAY-WORKER", "ws_pub.publish_json failed: " + traceback.format_exc())
-
-                                            # 2) signal the whole pipeline to stop
+                                            # Just signal stop; browser will see stream stop
                                             self.stop_event.set()
-
-                                            # 3) close the publisher in background (don't block display thread)
-                                            try:
-                                                if ws_pub is not None:
-                                                    import threading as _thr
-
-                                                    def _close_pub():
-                                                        try:
-                                                            # allow a small grace for the JSON to be delivered
-                                                            time.sleep(0.15)
-                                                            ws_pub.close(timeout=1.5)
-                                                        except Exception:
-                                                            log.debug("DISPLAY-WORKER", "ws_pub.close failed: " + traceback.format_exc())
-
-                                                    _thr.Thread(target=_close_pub, name="ws_pub_close", daemon=True).start()
-                                            except Exception:
-                                                log.debug("DISPLAY-WORKER", "failed to spawn ws_pub close thread: " + traceback.format_exc())
-
                                     except Exception:
-                                        log.debug("DISPLAY-WORKER", "control cmd failed: " + traceback.format_exc())
+                                        log.debug(
+                                            "DISPLAY-WORKER",
+                                            "control cmd failed: "
+                                            + traceback.format_exc(),
+                                        )
                         except Exception:
-                            log.debug("DISPLAY-WORKER","control queue handling failed: "+traceback.format_exc())
+                            log.debug(
+                                "DISPLAY-WORKER",
+                                "control queue handling failed: "
+                                + traceback.format_exc(),
+                            )
 
-                        # small sleep/yield to avoid busy loop; broadcaster pushes on its own timer
-                        # we don't call cv2.waitKey when purely using web publishing
+                        # When using WebRTC, no cv2.imshow / waitKey
                         continue
 
-                    # FALLBACK: original imshow path (unchanged)
+                    # FALLBACK: original OpenCV windows
                     if not self.args.no_roi:
-                        shown_roi = show_in_resizable_window("ROI View", roi_disp, default_roi_w, default_roi_h, preserve_aspect=True)
+                        shown_roi = show_in_resizable_window(
+                            "ROI View",
+                            roi_disp,
+                            default_roi_w,
+                            default_roi_h,
+                            preserve_aspect=True,
+                        )
                     if not self.args.no_full:
-                        shown_full = show_in_resizable_window("Full View", full_disp, default_full_w, default_full_h, preserve_aspect=True)
+                        shown_full = show_in_resizable_window(
+                            "Full View",
+                            full_disp,
+                            default_full_w,
+                            default_full_h,
+                            preserve_aspect=True,
+                        )
 
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
@@ -560,14 +559,21 @@ class DisplayWorker(threading.Thread):
                         break
                     elif key == ord("s"):
                         try:
-                            _save_screenshot(last_full_disp, self.args.source, getattr(feeder, "out_index", None))
+                            _save_screenshot(
+                                last_full_disp,
+                                self.args.source,
+                                getattr(feeder, "out_index", None),
+                            )
                         except Exception:
-                            log.debug("DISPLAY-WORKER", "screenshot failed", exc_info=True)
+                            log.debug(
+                                "DISPLAY-WORKER",
+                                "screenshot failed",
+                                exc_info=True,
+                            )
 
                 except Exception:
                     log.error("DISPLAY-WORKER", "imshow/publish failed")
                     log.debug("DISPLAY-WORKER", traceback.format_exc())
-
 
             except Exception:
                 log.error(
@@ -591,14 +597,18 @@ class DisplayWorker(threading.Thread):
                             pass
                 except Exception:
                     pass
-                
+
                 # just before showing or immediately after (prefer after imshow+waitKey to measure when UI loop processed)
                 display_ts = time.monotonic()
                 # mark display_shown
                 try:
-                    frame_idx = res.get("frame_id") or getattr(feeder, "src_frame_idx", None)
+                    frame_idx = res.get("frame_id") or getattr(
+                        feeder, "src_frame_idx", None
+                    )
                     if hasattr(self, "injected") and self.injected.get("metrics"):
-                        self.injected["metrics"].mark(int(frame_idx or -1), "display_shown", ts=display_ts)
+                        self.injected["metrics"].mark(
+                            int(frame_idx or -1), "display_shown", ts=display_ts
+                        )
                 except Exception:
                     pass
 

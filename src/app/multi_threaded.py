@@ -11,7 +11,7 @@ from src.display.worker import DisplayWorker
 from src.utils.metrics import MetricsCollector
 from src.utils.logger import log
 
-from src.display.publish_ws import WSPublisher
+from src.display.webrtc_server import WebRTCServer
 import queue as std_queue
 
 
@@ -592,13 +592,16 @@ def _cleanup(
         pass
 
     try:
-        if "ws_pub" in (injected or {}):
-            try:
-                injected.get("ws_pub").close(timeout=2.0)
-            except Exception:
-                pass
+        webrtc_server = injected.get("webrtc_server")
     except Exception:
-        pass
+        webrtc_server = None
+
+    if webrtc_server is not None:
+        try:
+            webrtc_server.close()
+        except Exception:
+            log.debug("RUNNER", "Failed to close WebRTCServer", exc_info=True)
+
 
     log.info("RUNNER", "Threaded runner stopped")
 
@@ -653,26 +656,37 @@ def run_threaded(args):
     injected, injected_csvs = _prepare_injected_context(args, cap_info)
     injected["metrics"] = metrics
 
-    # create WS publisher if requested (use args.ws_port or args.enable_ws)
-    ws_pub = None
-    ws_control_q = None
+    # create WebRTC server if requested
+    webrtc_server = None
+    webrtc_control_q = None
     try:
-        if getattr(args, "ws_enable", False) or getattr(args, "ws_port", None):
-            ws_host = getattr(args, "ws_host", "0.0.0.0")
-            ws_port = int(getattr(args, "ws_port", 8080))
-            ws_pub = WSPublisher(
-                host=ws_host,
-                port=ws_port,
-                jpeg_quality=getattr(args, "ws_jpeg_quality", 80),
+        if getattr(args, "webrtc_enable", False):
+            rtc_host = getattr(args, "webrtc_host", "0.0.0.0")
+            rtc_port = int(getattr(args, "webrtc_port", 8080))
+            rtc_fps = float(getattr(args, "webrtc_fps", 25.0))
+            rtc_max_clients = getattr(args, "webrtc_max_clients", 2)
+            rtc_downscale_height = int(getattr(args, "webrtc_downscale_height", 960))
+            rtc_downscale_width = int(getattr(args, "webrtc_downscale_width", 540))
+
+            webrtc_server = WebRTCServer(
+                host=rtc_host,
+                port=rtc_port,
+                target_fps=rtc_fps,
+                max_clients=rtc_max_clients,
+                downscale_height=rtc_downscale_height,
+                downscale_width=rtc_downscale_width,
             )
-            # control queue used by WSPublisher to forward JSON messages to DisplayWorker
-            ws_control_q = std_queue.Queue(maxsize=32)
-            ws_pub.set_control_queue(ws_control_q)
-            injected["ws_pub"] = ws_pub
-            injected["ws_control_q"] = ws_control_q
-            log.info("RUNNER", f"WSPublisher started on {ws_host}:{ws_port}")
+
+            webrtc_control_q = std_queue.Queue(maxsize=32)
+            webrtc_server.set_control_queue(webrtc_control_q)
+
+            injected["webrtc_server"] = webrtc_server
+            injected["webrtc_control_q"] = webrtc_control_q
+
+            log.info("RUNNER", f"WebRTCServer started on {rtc_host}:{rtc_port}")
     except Exception:
-        log.error("RUNNER", "Failed to start WSPublisher: " + traceback.format_exc())
+        log.error("RUNNER", "Failed to start WebRTCServer: " + traceback.format_exc())
+
 
     runtime_cfg = _build_runtime_cfg(args)
     pacer = _create_and_start_pacer(
