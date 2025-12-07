@@ -145,8 +145,10 @@ def _prepare_injected_context(args, cap_info):
 
         if cap_info:
             injected["total"] = int(cap_info.get("total", 0) or 0)
+            injected["fps"] = float(cap_info.get("fps", 25.0) or 25.0)
         else:
             injected["total"] = getattr(args, "total_frames", 0)
+            injected["fps"] = float(getattr(args, "source_fps", 25.0) or 25.0)
     except Exception:
         injected = {}
 

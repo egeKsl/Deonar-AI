@@ -21,9 +21,10 @@ import queue
 import time
 import cv2
 import traceback
-from typing import Tuple
+from typing import Tuple, Optional
 
 import numpy as np
+from scipy import stats
 
 from src.utils.logger import log
 from src.display.drawing import (
@@ -41,6 +42,8 @@ from src.counting.counting_modes.counting_modes import (
     process_frame_line,
 )
 from src.counting.state import _init_count_state
+import os
+from src.utils.video_recorder import VideoRecorder
 
 
 # ----- small helpers for robust display -----
@@ -158,6 +161,32 @@ class DisplayWorker(threading.Thread):
 
         # windows setup guard
         self._windows_setup = False
+
+        # --- new: video recorder config ---
+        record_video = bool(getattr(self.args, "record_video", False))
+        self.video_recorder: Optional[VideoRecorder] = None
+        if record_video:
+            # Prefer config fps; otherwise use capture fps; fallback 25.0
+            cap_fps = injected.get("fps", 25.0)
+            fps = float(getattr(self.args, "video_fps", cap_fps) or cap_fps)
+            video_path = getattr(
+                self.args,
+                "video_path",
+                "outputs/videos/goats_output.mp4",
+            )
+            fourcc = getattr(self.args, "video_fourcc", "mp4v")
+
+            self.video_recorder = VideoRecorder(
+                path=video_path,
+                fps=fps,
+                fourcc=fourcc,
+            )
+            log.info(
+                "DISPLAY-WORKER",
+                f"Video recording enabled -> {video_path} (fps={fps}, fourcc={fourcc})",
+            )
+        else:
+            log.debug("DISPLAY-WORKER", "Video recording disabled")
 
     # ---------------- drawing context ----------------
     def _ensure_drawing(self, sample_frame):
@@ -472,10 +501,19 @@ class DisplayWorker(threading.Thread):
                         roi_disp = 255 * np.ones((240, 320, 3), dtype=np.uint8)
                         full_disp = roi_disp
 
+                # --- record to video first ---
+                try:
+                    if self.video_recorder is not None:
+                        self.video_recorder.write(full_disp)
+                except Exception:
+                    log.debug("DISPLAY-WORKER", "Video recording failed", exc_info=True)
+
                 # display / publish / handle UI events
                 try:
                     default_roi_w = min(960, rw) if rw else 640
-                    default_roi_h = int(default_roi_w * (rh / max(1, rw))) if rw else 480
+                    default_roi_h = (
+                        int(default_roi_w * (rh / max(1, rw))) if rw else 480
+                    )
                     default_full_w = min(960, W) if W else 640
                     default_full_h = int(default_full_w * (H / max(1, W))) if W else 480
 
@@ -510,13 +548,19 @@ class DisplayWorker(threading.Thread):
                                         break
 
                                     try:
-                                        if isinstance(cmd, dict) and cmd.get("cmd") == "screenshot":
+                                        if (
+                                            isinstance(cmd, dict)
+                                            and cmd.get("cmd") == "screenshot"
+                                        ):
                                             _save_screenshot(
                                                 full_disp,
                                                 getattr(self.args, "source", None),
                                                 getattr(feeder, "out_index", None),
                                             )
-                                        elif isinstance(cmd, dict) and cmd.get("cmd") == "quit":
+                                        elif (
+                                            isinstance(cmd, dict)
+                                            and cmd.get("cmd") == "quit"
+                                        ):
                                             # Just signal stop; browser will see stream stop
                                             self.stop_event.set()
                                     except Exception:
@@ -618,3 +662,11 @@ class DisplayWorker(threading.Thread):
             log.debug("DISPLAY-WORKER", "cv2.destroyAllWindows failed")
             pass
         log.info("DISPLAY-WORKER", "DisplayWorker exiting")
+        
+        try:
+            if self.video_recorder is not None:
+                stats = self.video_recorder.get_stats()
+                log.info("VIDEO", f"Recording stats: {stats}")
+                self.video_recorder.close()
+        except Exception:
+            log.debug("DISPLAY-WORKER", "Failed to close video recorder", exc_info=True)

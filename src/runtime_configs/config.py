@@ -511,6 +511,8 @@ def load_config(
     cfg["logging"] = raw.get("logging", {})
     # webrtc
     cfg["webrtc"] = raw.get("webrtc", {})
+    # output_video
+    cfg["output_video"] = raw.get("output_video", {})
     
     # legacy_env if fallback used
     if not used_yaml:
@@ -1139,6 +1141,38 @@ def load_config(
         ),
         default=540,
     )
+    
+    # output video config
+    output_video = cfg.get("output_video", {})
+    record_video = _as_bool(
+        (
+            output_video.get("enable")
+        ),
+        False,
+    )
+    video_path = _as_str(
+        (
+            output_video.get("filename")
+        ),
+        default="output_video.mp4",
+    )
+    video_fps = _as_int(
+        (
+            output_video.get("fps")
+        ),
+        default=30,
+    )
+    video_fourcc = _as_str(
+        (
+            output_video.get("fourcc")
+        ),
+        default="mp4v",
+    )
+    video_path = (
+        _resolve_path(video_path, str(base_dir / "outputs" / "video"))
+        if video_path
+        else None
+    )
 
     # convert some BGRs to CSV/legacy string forms so old code expecting "0,255,0" keeps working
     count_box_color_str = f"{counted_bgr[0]},{counted_bgr[1]},{counted_bgr[2]}"
@@ -1243,6 +1277,12 @@ def load_config(
             "max_clients": webrtc_max_clients,
             "downscale_width": webrtc_downscale_width,
             "downscale_height": webrtc_downscale_height,
+        },
+        "output_video": {
+            "enable": record_video,
+            "filename": video_path,
+            "fps": video_fps,
+            "fourcc": video_fourcc,
         },
     }
 
@@ -1355,6 +1395,11 @@ def load_config(
         webrtc_max_clients=CONFIG["webrtc"]["max_clients"],
         webrtc_downscale_width=CONFIG["webrtc"]["downscale_width"],
         webrtc_downscale_height=CONFIG["webrtc"]["downscale_height"],
+        # Output video
+        record_video=CONFIG["output_video"]["enable"],
+        video_path=CONFIG["output_video"]["filename"],
+        video_fps=CONFIG["output_video"]["fps"],
+        video_fourcc=CONFIG["output_video"]["fourcc"],
     )
     # Ensure logs directory exists
     try:

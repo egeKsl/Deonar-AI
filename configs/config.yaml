@@ -187,7 +187,7 @@ logging:
 
 
 # ------------------------------
-# WebRTC server
+# WebRTC server (outputs live video)
 # ------------------------------
 webrtc:
   enable: true
@@ -196,4 +196,13 @@ webrtc:
   max_clients: 2
   downscale_width: 960
   downscale_height: 540
+  fps: 25
+
+# ------------------------------
+# output video recording
+# ------------------------------
+output_video:
+  enable: true
+  filename: output.mp4
+  fourcc: "mp4v"
   fps: 25
