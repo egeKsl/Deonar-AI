@@ -2,42 +2,25 @@
 """
 setup_installer.py
 
-Robust two-phase installer:
-1) Installs the non-machine-dependent Python packages (a single bulk pip install)
-   so utilities like `rich` are present for a nicer UI.
-2) Re-runs with the full, rich-enabled UI to detect system details and
-   install machine-dependent packages (PyTorch wheels, cuda-python, nvidia-ml-py,
-   OpenCV variant and ffmpeg validation).
+Enhanced, robust two-phase installer with:
+- Phase-1: safe install of non-machine deps (but now skips incompatible packages to avoid bulk failure)
+- Phase-2: machine-dependent installs with validation
+- Python-version compatibility checks and clear user-friendly logging
+- Timestamped, colored logs with emojis (rich if available, graceful ANSI fallback)
 
-Design goals applied:
-- Do not import optional UI libraries (rich) until after the safe deps are
-  installed in phase 1 so the user can run this script on a fresh environment.
-- Bulk installs non-machine-dependent deps first (single pip invocation).
-- Clear, colored console fallback before rich is available.
-- Validate PyTorch wheel availability before trying to install it.
-- Detect headless environment and recommend opencv-python-headless.
-- Validate ffmpeg and provide OS-specific hints.
-- Respect dry-run, --no-deps flags and allow the user to opt-out of
-  auto-installing machine-dependent packages.
-
-New feature (added): Python-version compatibility checks
-- Script prints a "sweet spot" Python version range at startup.
-- Before installing each package, the script checks whether the current
-  Python interpreter version falls within the package's declared supported
-  range (configurable in the script as `PYTHON_SUPPORT_MAP`).
-- If a package appears incompatible with current Python, the script logs a
-  clear, colored warning that shows the current version and the supported
-  range for that package. Required packages that are incompatible are
-  skipped and treated as failures; optional packages will be skipped with a
-  warning but the installer continues.
+Behavior changes vs earlier version:
+- Before bulk-install, the script checks Python compatibility for each non-machine package.
+  If a package is likely incompatible with the current interpreter, it will be skipped
+  (moved to "skipped_non_machine"), and a clear warning will be shown instead of
+  letting pip fail the whole Phase-1. This prevents abrupt aborts like aiortc failing
+  on older Python versions.
+- The script prints a concise summary of which packages were installed, skipped, or failed.
 
 Usage:
-  python setup_installer.py                # interactive flow; will attempt phase1 then phase2
-  python setup_installer.py --dry-run     # show what would happen, do not install
-  python setup_installer.py --torch-version 2.7.0 --install-cuda-python --install-nvidia-ml
+  python setup_installer.py
+  python setup_installer.py --dry-run
+  python setup_installer.py --torch-version 2.7.0 --install-cuda-python
 
-Note: This script runs pip as a subprocess. Read outputs carefully before
-re-running with different flags.
 """
 
 from __future__ import annotations
@@ -78,13 +61,7 @@ NON_MACHINE_DEPS = [
 ]
 
 # --------------------- Python version support map ---------------------
-# Each entry maps a package *key* (a substring matched against the package name)
-# to a supported Python version range (inclusive). You can expand this list
-# to tighten checks per-package. If a package is not present here we assume
-# "unknown" and do not block installation (but still show a hint).
-# Format: (min_major, min_minor, max_major, max_minor)
 PYTHON_SUPPORT_MAP = {
-    # Most modern scientific libs work on Python 3.8 - 3.12 in general
     "numpy": (3, 8, 3, 12),
     "scipy": (3, 8, 3, 12),
     "torch": (3, 8, 3, 12),
@@ -92,7 +69,7 @@ PYTHON_SUPPORT_MAP = {
     "torchaudio": (3, 8, 3, 12),
     "opencv": (3, 8, 3, 12),
     "av": (3, 8, 3, 12),
-    "aiortc": (3, 8, 3, 12),
+    "aiortc": (3, 10, 3, 12),  # aiortc 3.x requires newer Python in many builds
     "aiohttp": (3, 8, 3, 12),
     "Pillow": (3, 8, 3, 12),
     "boto3": (3, 8, 3, 12),
@@ -102,14 +79,61 @@ PYTHON_SUPPORT_MAP = {
     "filterpy": (3, 8, 3, 12),
     "lap": (3, 8, 3, 12),
     "tqdm": (3, 7, 3, 12),
-    # cuda-python and nvidia-ml-py: may require specific ranges depending on releases
     "cuda-python": (3, 8, 3, 12),
     "nvidia-ml-py": (3, 7, 3, 12),
 }
 
+# --------------------- Logging helpers ---------------------
 
-def run(cmd: List[str], capture: bool = True, env=None, check: bool = False) -> Tuple[int, str, str]:
-    """Run a subprocess and capture output."""
+
+def _now_ts() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+
+# Try to import rich for visually pleasing logs; fallback to ANSI
+try:
+    from rich.console import Console
+    from rich.text import Text
+    from rich.style import Style
+
+    RCON = Console()
+
+    def log(level: str, msg: str):
+        emoji = {"info": "💡", "ok": "✅", "warn": "⚠️", "error": "❌"}.get(level, "")
+        style = {"info": "cyan", "ok": "green", "warn": "yellow", "error": "red"}.get(
+            level, ""
+        )
+        RCON.print(f"[{_now_ts()}] {emoji} ", end="")
+        RCON.print(msg, style=style)
+
+    RICH_AVAILABLE = True
+except Exception:
+    RICH_AVAILABLE = False
+    ANSI = {
+        "cyan": "[96m",
+        "green": "[92m",
+        "yellow": "[93m",
+        "red": "[91m",
+        "bold": "[1m",
+        "end": "[0m",
+    }
+
+    def log(level: str, msg: str):
+        emoji = {"info": "[i]", "ok": "[+]", "warn": "[!]", "error": "[-]"}.get(
+            level, ""
+        )
+        col = {"info": "cyan", "ok": "green", "warn": "yellow", "error": "red"}.get(
+            level, ""
+        )
+        print(f"[{_now_ts()}] {ANSI.get(col, '')}{emoji} {msg}{ANSI['end']}")
+
+
+# --------------------- Utilities ---------------------
+
+
+def run(
+    cmd: List[str], capture: bool = True, env=None, check: bool = False
+) -> Tuple[int, str, str]:
     try:
         proc = subprocess.Popen(
             cmd,
@@ -129,11 +153,6 @@ def run(cmd: List[str], capture: bool = True, env=None, check: bool = False) -> 
         return 127, "", f"Executable not found: {cmd[0]}"
 
 
-def simple_print(msg: str) -> None:
-    # ANSI-safe print (used before rich installed)
-    print(msg)
-
-
 def version_tuple() -> Tuple[int, int]:
     return sys.version_info.major, sys.version_info.minor
 
@@ -148,96 +167,95 @@ def version_in_range(cur: Tuple[int, int], rng: Tuple[int, int, int, int]) -> bo
     return True
 
 
-def check_package_python_support(pkg_name: str) -> Tuple[bool, Optional[Tuple[int, int, int, int]]]:
-    """Return (is_supported, declared_range) for a package name by matching substrings.
-    If no mapping exists, return (True, None) — treat unknown as allowed but warn.
-    """
+def check_package_python_support(
+    pkg_name: str,
+) -> Tuple[bool, Optional[Tuple[int, int, int, int]]]:
     cur = version_tuple()
     for key, rng in PYTHON_SUPPORT_MAP.items():
         if key.lower() in pkg_name.lower():
             ok = version_in_range(cur, rng)
             return ok, rng
-    # unknown package — we don't block but warn
     return True, None
 
 
-def install_non_machine_deps(dry_run: bool = False, no_deps: bool = False) -> bool:
-    """Install NON_MACHINE_DEPS in bulk. Returns True on success (or dry-run).
-    We bulk-install in one pip invocation to speed up the process and avoid
-    partial installation edge cases.
+# --------------------- Phase-1 installer (safe) ---------------------
+
+
+def install_non_machine_deps(
+    dry_run: bool = False, no_deps: bool = False
+) -> Tuple[bool, List[str]]:
+    """Install NON_MACHINE_DEPS but skip packages that are incompatible with current Python.
+    Returns (success, skipped_list).
     """
-    if dry_run:
-        simple_print("[dry-run] Would install non-machine dependencies: ")
-        for p in NON_MACHINE_DEPS:
-            simple_print("  - " + p)
-        return True
-
-    # Before installing, do a lightweight python-compat check across the bulk list
     cur = version_tuple()
-    incompatible = []
-    for p in NON_MACHINE_DEPS:
-        # use package token before any '==' or '>='
-        pname = p.split()[0].split("=")[0].split(">")[0]
-        ok, rng = check_package_python_support(pname)
-        if not ok:
-            incompatible.append((pname, rng))
-    if incompatible:
-        simple_print("WARNING: Your Python interpreter may be incompatible with some non-machine deps:")
-        for name, rng in incompatible:
-            if rng:
-                simple_print(f"  - {name}: requires Python {rng[0]}.{rng[1]} - {rng[2]}.{rng[3]} but current is {cur[0]}.{cur[1]}")
-            else:
-                simple_print(f"  - {name}: no declared range, but proceed with caution — current Python {cur[0]}.{cur[1]}")
-        simple_print("You can continue, but consider using a virtualenv with a recommended Python version.")
+    skipped = []
+    to_install = []
 
-    pip_cmd = [sys.executable, "-m", "pip", "install"] + NON_MACHINE_DEPS
+    for spec in NON_MACHINE_DEPS:
+        # extract package token (before comparison operators)
+        token = spec.split()[0].split("=")[0].split(">")[0]
+        ok, rng = check_package_python_support(token)
+        if not ok:
+            log(
+                "warn",
+                f"Skipping {token} for Python {cur[0]}.{cur[1]} (supported: {rng[0]}.{rng[1]} - {rng[2]}.{rng[3]})",
+            )
+            skipped.append(token)
+            continue
+        to_install.append(spec)
+
+    if dry_run:
+        log(
+            "info",
+            "Dry-run mode: the following non-machine packages would be installed:",
+        )
+        for s in to_install:
+            log("info", f"  - {s}")
+        if skipped:
+            log(
+                "warn",
+                "The following packages would be skipped due to Python-version incompatibility: "
+                + ", ".join(skipped),
+            )
+        return True, skipped
+
+    if not to_install:
+        log("warn", "No non-machine packages to install after compatibility filtering.")
+        return True, skipped
+
+    pip_cmd = [sys.executable, "-m", "pip", "install"] + to_install
     if no_deps:
         pip_cmd.append("--no-deps")
-    simple_print(
-        "Installing non-machine-dependent packages (this may take a few minutes)..."
+
+    log(
+        "info",
+        "Installing non-machine-dependent packages (filtered for compatibility)...",
     )
     code, out, err = run(pip_cmd, capture=True)
     if code == 0:
-        simple_print("Non-machine dependencies installed successfully.")
-        return True
+        log("ok", "Non-machine dependencies installed successfully.")
+        return True, skipped
     else:
-        simple_print(
-            "Failed to install non-machine dependencies. See pip output below:"
+        log(
+            "error", "Failed to install non-machine dependencies. See pip output below:"
         )
-        simple_print(out)
-        simple_print(err)
-        return False
+        log("info", out + " " + err)
+        return False, skipped
 
 
-# --------------------- After Phase-1 we import rich ---------------------
+# --------------------- After Phase-1 we re-try rich import ---------------------
 try:
     from rich import box
     from rich.console import Console
-    from rich.progress import (
-        Progress,
-        SpinnerColumn,
-        TextColumn,
-        BarColumn,
-        TimeElapsedColumn,
-    )
     from rich.table import Table
-    from rich.text import Text
 
     CONSOLE = Console()
-
-    def styled(msg, style=""):
-        CONSOLE.print(msg, style=style)
-
     RICH_AVAILABLE = True
 except Exception:
-    # If rich still isn't importable, fall back to simple_print
     RICH_AVAILABLE = False
 
-    def styled(msg, style=""):
-        simple_print(msg)
 
-
-# --------------------- System detection utilities ---------------------
+# --------------------- System detection and installer class ---------------------
 
 
 def is_root() -> bool:
@@ -250,7 +268,6 @@ def is_root() -> bool:
 
 
 def detect_nvidia_smi() -> Optional[dict]:
-    """Return a dict with nvidia-smi parsed info if available."""
     code, out, err = run(
         [
             "nvidia-smi",
@@ -310,37 +327,40 @@ class Installer:
         self.start_time = time.time()
 
     def detect_system(self):
-        styled("[bold]Detecting system environment...[/bold]")
-        # Print Python "sweet spot" info
         cur = version_tuple()
-        min_py = (self.args.py_min_major, self.args.py_min_minor)
-        max_py = (self.args.py_max_major, self.args.py_max_minor)
-        styled(f"[blue]Current Python:{cur[0]}.{cur[1]} — recommended range: {min_py[0]}.{min_py[1]} - {max_py[0]}.{max_py[1]}[/blue]")
-
+        styled_range = f"{self.args.py_min_major}.{self.args.py_min_minor} - {self.args.py_max_major}.{self.args.py_max_minor}"
+        log(
+            "info",
+            f"Current Python: {cur[0]}.{cur[1]} — recommended range: {styled_range}",
+        )
         n = detect_nvidia_smi()
         if n:
-            styled(
-                f"[green]nvidia-smi found:[/green] GPUs={n['gpus']} driver={n['driver']} names={n['names']}"
+            log(
+                "ok",
+                f"nvidia-smi found: GPUs={n['gpus']} driver={n['driver']} names={n['names']}",
             )
         else:
-            styled(
-                "[yellow]nvidia-smi not available or returned non-zero. GPU info unknown.[/yellow]"
+            log(
+                "warn",
+                "nvidia-smi not available or returned non-zero. GPU info unknown.",
             )
         ff = detect_ffmpeg()
         if ff:
-            styled("[green]ffmpeg detected on PATH.[/green]")
+            log("ok", "ffmpeg detected on PATH.")
         else:
-            styled(
-                "[yellow]ffmpeg not detected. Some packages (av, aiortc) may require ffmpeg installed on system.[/yellow]"
+            log(
+                "warn",
+                "ffmpeg not detected. Some packages (av, aiortc) may require ffmpeg installed on system.",
             )
         headless = is_headless()
         if headless:
-            styled(
-                "[yellow]Headless environment detected. Will recommend opencv-python-headless.[/yellow]"
+            log(
+                "warn",
+                "Headless environment detected. Will recommend opencv-python-headless.",
             )
         else:
-            styled(
-                "[green]Display server detected. GUI-capable OpenCV wheel recommended.[/green]"
+            log(
+                "info", "Display server detected. GUI-capable OpenCV wheel recommended."
             )
         return {"nvidia": n, "ffmpeg": ff, "headless": headless}
 
@@ -398,16 +418,15 @@ class Installer:
                     )
                 )
         else:
-            styled(
-                "[yellow]No torch_version provided; skipping PyTorch automatic install. User must install manually.[/yellow]"
+            log(
+                "warn",
+                "No torch_version provided; skipping PyTorch automatic install. User must install manually.",
             )
 
         if self.args.install_cuda_python:
             self.queue.append(
                 PackageTask(
                     name="cuda-python",
-                    wheel_spec=None,
-                    install_args=None,
                     optional=True,
                     reason="Provides Python bindings for CUDA runtime — may not be necessary if user uses system CUDA.",
                 )
@@ -416,8 +435,6 @@ class Installer:
             self.queue.append(
                 PackageTask(
                     name="nvidia-ml-py",
-                    wheel_spec=None,
-                    install_args=None,
                     optional=True,
                     reason="Used to query GPU telemetry via Python (pynvml).",
                 )
@@ -435,8 +452,6 @@ class Installer:
         self.queue.append(
             PackageTask(
                 name="ffmpeg",
-                wheel_spec=None,
-                install_args=None,
                 optional=True,
                 reason="System package — not installed via pip. Script will only validate presence and provide install hints.",
             )
@@ -447,9 +462,7 @@ class Installer:
     def validate_pytorch_wheels(self, task: PackageTask) -> bool:
         if not task.wheel_spec:
             return False
-        styled(
-            f"[blue]Validating availability of {task.wheel_spec} from index...[/blue]"
-        )
+        log("info", f"Validating availability of {task.wheel_spec} from index...")
         cmd = [
             sys.executable,
             "-m",
@@ -466,7 +479,7 @@ class Installer:
         code, out, err = run(cmd, capture=True)
         files = os.listdir(self.tempdir)
         if code == 0 and any(f.endswith(".whl") or ".tar.gz" in f for f in files):
-            styled(f"[green]Wheel found and downloaded to temp dir.[/green]")
+            log("ok", "Wheel found and downloaded to temp dir.")
             for f in files:
                 try:
                     os.remove(os.path.join(self.tempdir, f))
@@ -474,8 +487,9 @@ class Installer:
                     pass
             return True
         else:
-            styled(
-                f"[red]Could not find wheel for {task.wheel_spec}. pip output:{out}{err}[/red]"
+            log(
+                "error",
+                f"Could not find wheel for {task.wheel_spec}. pip output:{out} {err}",
             )
             for f in os.listdir(self.tempdir):
                 try:
@@ -485,40 +499,45 @@ class Installer:
             return False
 
     def install_task(self, task: PackageTask) -> bool:
-        # Check python compatibility for this specific package before attempting install
         ok, declared = check_package_python_support(task.name)
         cur = version_tuple()
         if declared is not None and not ok:
-            styled(
-                f"[red]Incompatible: {task.name} does not support Python {cur[0]}.{cur[1]}." \
-                f" Supported: {declared[0]}.{declared[1]} - {declared[2]}.{declared[3]} Skipping install." 
+            log(
+                "error",
+                f"Incompatible: {task.name} does not support Python {cur[0]}.{cur[1]}. Supported: {declared[0]}.{declared[1]} - {declared[2]}.{declared[3]}. Skipping install.",
             )
-            # Treat incompatible required packages as failures; optional packages as skipped
             return task.optional
         elif declared is None:
-            styled(f"[yellow]No explicit Python-range metadata for {task.name}; proceeding with caution.[/yellow]")
+            log(
+                "warn",
+                f"No explicit Python-range metadata for {task.name}; proceeding with caution.",
+            )
 
         if task.name == "ffmpeg":
             ok = detect_ffmpeg()
             if ok:
-                styled("[green]ffmpeg is present on PATH.[/green]")
+                log("ok", "ffmpeg is present on PATH.")
                 return True
-            styled(
-                "[yellow]ffmpeg not found. Please install system ffmpeg. Common commands:"
+            log(
+                "warn",
+                "ffmpeg not found. Please install system ffmpeg. Common commands:",
             )
             system = platform.system().lower()
             if system == "linux":
-                styled(
-                    "apt (Debian/Ubuntu): sudo apt update && sudo apt install ffmpeg -y"
+                log(
+                    "info",
+                    "apt (Debian/Ubuntu): sudo apt update && sudo apt install ffmpeg -y",
                 )
-                styled(
-                    "yum (CentOS/RHEL): sudo yum install epel-release && sudo yum install ffmpeg -y"
+                log(
+                    "info",
+                    "yum (CentOS/RHEL): sudo yum install epel-release && sudo yum install ffmpeg -y",
                 )
             elif system == "darwin":
-                styled("brew install ffmpeg")
+                log("info", "brew install ffmpeg")
             elif system == "windows":
-                styled(
-                    "choco install ffmpeg -y  OR download static builds from ffmpeg.org and add to PATH"
+                log(
+                    "info",
+                    "choco install ffmpeg -y  OR download static builds from ffmpeg.org and add to PATH",
                 )
             return False
 
@@ -532,14 +551,14 @@ class Installer:
         if self.args.no_deps:
             pip_cmd.append("--no-deps")
 
-        styled(f"[cyan]Installing {task.name}...[/cyan]")
+        log("info", f"Installing {task.name}...")
         code, out, err = run(pip_cmd, capture=True)
         if code == 0:
-            styled(f"[green]Installed {task.name} successfully.[/green]")
+            log("ok", f"Installed {task.name} successfully.")
             return True
         else:
-            styled(f"[red]Failed to install {task.name}.")
-            styled(f"[yellow]Stdout:{out} Stderr: {err}[/yellow]")
+            log("error", f"Failed to install {task.name}.")
+            log("info", f"Stdout: {out} Stderr: {err}")
             return False
 
     def execute(self):
@@ -554,24 +573,38 @@ class Installer:
             table.add_column("Optional")
             table.add_column("Notes")
             for i, t in enumerate(queue, 1):
-                table.add_row(str(i), t.name, t.wheel_spec or "-", str(t.optional), t.reason or "-")
+                table.add_row(
+                    str(i),
+                    t.name,
+                    t.wheel_spec or "-",
+                    str(t.optional),
+                    t.reason or "-",
+                )
             CONSOLE.print(table)
         else:
-            styled("Planned install queue:")
+            log("info", "Planned install queue:")
             for i, t in enumerate(queue, 1):
-                styled(f"{i}. {t.name}  spec={t.wheel_spec or '-'} optional={t.optional} notes={t.reason or '-'}")
+                log(
+                    "info",
+                    f"{i}. {t.name}  spec={t.wheel_spec or '-'} optional={t.optional} notes={t.reason or '-'}",
+                )
 
         if self.args.dry_run:
-            styled("[bold yellow]Dry-run: no packages will actually be installed. Exiting.[/bold yellow]")
+            log("warn", "Dry-run: no packages will actually be installed. Exiting.")
             return
 
         for t in [q for q in queue if q.name == "torch"]:
             ok = self.validate_pytorch_wheels(t)
             if not ok:
-                styled(
-                    "[red]PyTorch wheel validation failed. Will not attempt to install torch automatically.[/red]"
+                log(
+                    "error",
+                    "PyTorch wheel validation failed. Will not attempt to install torch automatically.",
                 )
-                queue = [q for q in queue if q.name not in ("torch", "torchvision", "torchaudio")]
+                queue = [
+                    q
+                    for q in queue
+                    if q.name not in ("torch", "torchvision", "torchaudio")
+                ]
                 break
 
         successes = []
@@ -583,18 +616,18 @@ class Installer:
             else:
                 failures.append(t.name)
                 if not t.optional:
-                    styled(
-                        f"[red]Fatal: required package {t.name} failed to install. Stopping further installs.[/red]"
+                    log(
+                        "error",
+                        f"Fatal: required package {t.name} failed to install. Stopping further installs.",
                     )
                     break
                 else:
-                    styled(
-                        f"[yellow]Optional package {t.name} failed — continuing.[/yellow]"
-                    )
+                    log("warn", f"Optional package {t.name} failed — continuing.")
 
         total_time = time.time() - self.start_time
-        styled(
-            f"[bold]Summary:[/bold] Installed: {successes}  Failed: {failures}. Time: {total_time:.1f}s"
+        log(
+            "info",
+            f"Summary: Installed: {successes}  Failed: {failures}. Time: {total_time:.1f}s",
         )
 
     def cleanup(self):
@@ -602,6 +635,9 @@ class Installer:
             shutil.rmtree(self.tempdir)
         except Exception:
             pass
+
+
+# --------------------- CLI and main ---------------------
 
 
 def parse_args():
@@ -660,15 +696,35 @@ def parse_args():
         help="Do not actually perform installs; only show plan",
     )
     # Python sweet spot overrides
-    ap.add_argument("--py-min-major", type=int, default=3, help="Minimum Python major version (default 3)")
-    ap.add_argument("--py-min-minor", type=int, default=8, help="Minimum Python minor version (default 8)")
-    ap.add_argument("--py-max-major", type=int, default=3, help="Maximum Python major version (default 3)")
-    ap.add_argument("--py-max-minor", type=int, default=12, help="Maximum Python minor version (default 12)")
+    ap.add_argument(
+        "--py-min-major",
+        type=int,
+        default=3,
+        help="Minimum Python major version (default 3)",
+    )
+    ap.add_argument(
+        "--py-min-minor",
+        type=int,
+        default=8,
+        help="Minimum Python minor version (default 8)",
+    )
+    ap.add_argument(
+        "--py-max-major",
+        type=int,
+        default=3,
+        help="Maximum Python major version (default 3)",
+    )
+    ap.add_argument(
+        "--py-max-minor",
+        type=int,
+        default=12,
+        help="Maximum Python minor version (default 12)",
+    )
     return ap.parse_args()
 
 
 def _signal_handler(sig, frame):
-    styled("[red]Interrupted by user. Exiting...[/red]")
+    log("error", "Interrupted by user. Exiting...")
     sys.exit(1)
 
 
@@ -676,22 +732,29 @@ def main():
     args = parse_args()
     signal.signal(signal.SIGINT, _signal_handler)
 
-    # Phase-1: ensure the non-machine-dependent requirements are present so rich and
-    # other tooling are available for phase-2 UI and logging.
-    ok = install_non_machine_deps(dry_run=args.dry_run, no_deps=args.no_deps)
+    ok, skipped = install_non_machine_deps(dry_run=args.dry_run, no_deps=args.no_deps)
     if not ok:
-        simple_print("Phase-1 failed. Aborting.")
+        log("error", "Phase-1 failed. Aborting.")
         sys.exit(1)
+    if skipped:
+        log(
+            "warn",
+            "Phase-1 skipped packages due to Python incompatibility: "
+            + ", ".join(skipped),
+        )
 
-    # Re-import rich (the script attempts earlier; if it failed earlier, now it should
-    # succeed because we installed rich in Phase-1). We keep the graceful fallback.
-    global RICH_AVAILABLE
+    # Re-import rich (if available) for prettier tables in phase 2
+    global RICH_AVAILABLE, CONSOLE, box, Table
+
     try:
-        from rich import box  # type: ignore
-        from rich.console import Console  # type: ignore
-        from rich.table import Table  # type: ignore
+        from rich import box as rich_box
+        from rich.console import Console
+        from rich.table import Table as rich_Table
 
+        box = rich_box
+        Table = rich_Table
         CONSOLE = Console()
+
         RICH_AVAILABLE = True
     except Exception:
         RICH_AVAILABLE = False
