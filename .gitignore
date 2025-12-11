@@ -8,5 +8,6 @@ __pycache__/
 *.csv
 *.jpg
 *.png
+*.log
 logs/
 outputs/

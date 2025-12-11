@@ -1296,6 +1296,11 @@ def parse_args():
         help="Path to write install metrics",
     )
     ap.add_argument(
+        "--metrics-dir",
+        default="./logs",
+        help="Directory where install logs and metrics JSON will be stored.",
+    )
+    ap.add_argument(
         "--retries", type=int, default=3, help="Retry attempts for failed installs"
     )
     ap.add_argument(
@@ -1330,13 +1335,31 @@ def main():
     args = parse_args()
     signal.signal(signal.SIGINT, _signal_handler)
 
-    ensure_rich(args.no_deps)
+    # ------------------ metrics / logs directory handling ------------------
+    metrics_dir = os.path.abspath(args.metrics_dir or "./logs")
+    try:
+        os.makedirs(metrics_dir, exist_ok=True)
+    except Exception as e:
+        log(
+            "warn",
+            f"Could not create metrics dir '{metrics_dir}': {e} — falling back to CWD",
+        )
+        metrics_dir = os.getcwd()
 
-    # re-import / bind rich UI objects now that rich should be available
+    metrics_fname = os.path.basename(args.metrics_file or "install_metrics.json")
+    args.metrics_file = os.path.join(metrics_dir, metrics_fname)
+    # -----------------------------------------------------------------------
+
+    # Ensure `rich` is available before doing UI stuff (this may install rich temporarily)
+    ensure_rich(args.no_deps)
+    
     try:
         from rich.console import Console as _RichConsole
         from rich.table import Table as _RichTable
         from rich.panel import Panel as _RichPanel
+
+        # ensure these are module-level so other functions can reference them
+        global CONSOLE, Table, Panel
 
         CONSOLE = _RichConsole()
         Table = _RichTable
@@ -1348,29 +1371,12 @@ def main():
             f"Rich UI not bound after install: {_e} — falling back to ANSI logging.",
         )
 
-    missing = [s for s in NON_MACHINE_DEPS if not package_already_present(s)]
-    if missing:
-        log("info", f"Non-machine packages missing: {missing}")
-        pip_cmd = [sys.executable, "-m", "pip", "install"] + missing
-        if args.no_deps:
-            pip_cmd.append("--no-deps")
-        # stream so user sees progress
-        if "--progress-bar=on" not in pip_cmd and args.always_progress:
-            pip_cmd += ["--progress-bar=on", "-v"]
-        code, out, err = run(pip_cmd)
-        if code == 0:
-            log("ok", "Installed missing non-machine packages")
-        else:
-            log("warn", f"Some non-machine installs failed: {out} {err}")
-    else:
-        log("ok", "All non-machine dependencies already present")
-
+    # Create the installer and let it handle everything (streaming, queue planning, non-machine installs)
     installer = Installer(args)
     try:
         installer.execute()
     finally:
         installer.cleanup()
-
 
 if __name__ == "__main__":
     main()
