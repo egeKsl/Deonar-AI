@@ -2,27 +2,9 @@
 """
 setup_installer_enhanced.py
 
-Ultra-enhanced two-phase installer (complete, robust, production-ready style):
-- Phase-1: checks which non-machine deps are already present and installs only missing ones
-- Phase-2: robust machine-dependent installer that auto-detects CUDA runtime (nvidia-smi/nvcc)
-  and tries prioritized wheel tags (cuXXX) with CPU fallback
-- Installs torch + torchvision + torchaudio trio in a safe way, preferring unpinned installs
-  (let pip choose matching wheel for the environment). A --torch-version may be provided to
-  force a specific base version but is not required.
-- If any of the trio is missing, installer will attempt to install just-missing packages; use
-  --force-reinstall to perform a full uninstall+reinstall of the trio.
-- Guarantees `rich` importable early so phase-2 logging/tables work; safe fallback to ANSI
-- Comprehensive, timestamped logs and a final detailed summary table showing (Installed / Skipped / Failed / AlreadyPresent)
-
-Usage examples:
-  python setup_installer_enhanced.py --auto-detect-torch
-  python setup_installer_enhanced.py --torch-version 2.7.1 --force-reinstall
-
-Design notes (short):
-- We make careful pip "download" checks prior to installing heavy wheels (fast failure)
-- We try indexes in order derived from detected CUDA runtime; always include CPU (PyPI) fallback
-- Non-machine deps are validated by import or pip show to avoid reinstalling things.
-
+Ultra-enhanced two-phase installer (complete, robust, production-ready style).
+This file is the updated version that streams pip output live, shows rich spinner/progress,
+parses pip download lines for sizes, estimates speeds/ETA, and writes install metrics.
 """
 
 from __future__ import annotations
@@ -37,6 +19,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
+import queue
+import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict
 
@@ -64,7 +49,6 @@ NON_MACHINE_DEPS = [
     "flake8>=6.1.0",
 ]
 
-# Python compatibility map (used only as advisory)
 PYTHON_SUPPORT_MAP = {
     "numpy": (3, 8, 3, 12),
     "scipy": (3, 8, 3, 12),
@@ -97,6 +81,17 @@ try:
     from rich.console import Console
     from rich.table import Table
     from rich.panel import Panel
+    from rich.spinner import Spinner
+    from rich.live import Live
+    from rich.progress import (
+        Progress,
+        BarColumn,
+        TextColumn,
+        TimeElapsedColumn,
+        TimeRemainingColumn,
+        DownloadColumn,
+        TransferSpeedColumn,
+    )
 
     RICH = True
     CONSOLE = Console()
@@ -200,21 +195,15 @@ def importable(module_name: str) -> bool:
 
 
 def package_already_present(spec: str) -> bool:
-    """Heuristic check: given a pip spec like 'numpy>=1.26.0' or 'rich>=13.6.0', determine if it's installed and satisfies version.
-    We do a coarse check: try import first (common mapping) else pip show.
-    This avoids unnecessary reinstallation.
-    """
+    """Heuristic check: given a pip spec like 'numpy>=1.26.0' or 'rich>=13.6.0', determine if it's installed and satisfies version."""
     token = spec.split()[0].split("=")[0].split(">")[0]
     token = token.strip()
     mapping = {
         "Pillow": "PIL",
-        # add more special-cases here if needed
     }
     module = mapping.get(token, token)
     if importable(module):
-        # optionally we could validate exact version using pkg_resources, but avoid heavy dependencies
         return True
-    # fallback to pip show
     info = pip_show(token)
     return info is not None
 
@@ -223,9 +212,7 @@ def package_already_present(spec: str) -> bool:
 
 
 def ensure_rich(no_deps: bool = False) -> bool:
-    """Guarantee rich importable. Install it alone if needed.
-    Returns True if rich importable afterwards.
-    """
+    """Guarantee rich importable. Install it alone if needed."""
     try:
         importlib.import_module("rich")
         return True
@@ -242,7 +229,6 @@ def ensure_rich(no_deps: bool = False) -> bool:
     try:
         importlib.invalidate_caches()
         importlib.import_module("rich")
-        # rebind rich console
         from rich.console import Console
 
         global CONSOLE, RICH
@@ -273,8 +259,15 @@ class Installer:
         self.args = args
         self.tempdir = tempfile.mkdtemp(prefix="setup_installer_")
         self.start = time.time()
-        # summary tracking
         self.summary = {"installed": [], "skipped": [], "failed": [], "already": []}
+        # metrics per package
+        self.metrics: Dict[str, dict] = {}
+        # raw log file
+        self.logfile = open(
+            self.args.metrics_file.replace(".json", "_full.log"), "a", buffering=1
+        )
+        # heartbeat threshold
+        self.heartbeat = max(2, self.args.heartbeat)
 
     # --------------------- system detection ---------------------
     def detect_system(self) -> dict:
@@ -342,7 +335,6 @@ class Installer:
     # --------------------- queue planning ---------------------
     def plan_queue(self, env: dict) -> List[PackageTask]:
         q: List[PackageTask] = []
-        # look at torch_version flag: if provided we still prefer auto-detect if user requested auto
         if self.args.torch_version:
             torch_spec = (
                 f"torch=={self.args.torch_version}+{self.args.cuda_tag}"
@@ -363,7 +355,6 @@ class Installer:
                     reason="PyTorch (user-pinned)",
                 )
             )
-            # append torchvision/torchaudio only if user supplied versions; otherwise trio will be handled by auto-install
             if self.args.torchvision_version:
                 q.append(
                     PackageTask(
@@ -429,7 +420,6 @@ class Installer:
                 name="ffmpeg", optional=True, reason="system binary; validated only"
             )
         )
-        # include non-machine checks as tasks for final reporting (we won't blindly reinstall these here)
         for spec in NON_MACHINE_DEPS:
             token = spec.split()[0].split("=")[0].split(">")[0]
             q.append(
@@ -442,7 +432,6 @@ class Installer:
 
     # -------------------- PyTorch auto-detection & helpers --------------------
     def detect_cuda_runtime(self) -> Optional[str]:
-        # Attempt several robust strategies to obtain CUDA runtime like '12.8' or '13.0'
         queries = [
             ["nvidia-smi", "--query-gpu=cuda_version", "--format=csv,noheader"],
             [
@@ -460,7 +449,6 @@ class Installer:
                     if p and any(ch.isdigit() for ch in p):
                         if "." in p or p.isdigit():
                             return p
-        # fallback to `nvidia-smi -q` parsing
         code, out, err = run(["nvidia-smi", "-q"])
         if code == 0 and out:
             for line in out.splitlines():
@@ -469,7 +457,6 @@ class Installer:
                         return line.split(":")[-1].strip()
                     except Exception:
                         pass
-        # fallback to nvcc
         code, out, err = run(["nvcc", "--version"])
         if code == 0 and out:
             for line in out.splitlines():
@@ -483,7 +470,6 @@ class Installer:
         return None
 
     def cuda_runtime_to_tags(self, cuda_runtime: Optional[str]) -> List[str]:
-        # produce prioritized tag list and always include cpu fallback
         if not cuda_runtime:
             candidates = ["cu130", "cu128", "cu121", "cu118"]
         else:
@@ -504,7 +490,6 @@ class Installer:
                     candidates += ["cu118", "cu121"]
             except Exception:
                 candidates = ["cu130", "cu128", "cu121", "cu118"]
-        # dedupe and append cpu
         seen = []
         for c in candidates:
             if c not in seen:
@@ -515,10 +500,6 @@ class Installer:
     def try_install_torch_trio(
         self, candidates: List[str], no_deps: bool = False
     ) -> bool:
-        """Try candidates in order. We use unpinned package names so pip selects matching wheels for Python/runtime.
-        If user supplied explicit torchvision/torchaudio versions they are respected.
-        Returns True on success.
-        """
         log(
             "info",
             f"Attempting PyTorch trio auto-install with candidates: {candidates}",
@@ -527,7 +508,6 @@ class Installer:
         ta_ver = self.args.torchaudio_version
 
         for cand in candidates:
-            # choose index
             if cand == "cpu":
                 index_args = ["-i", self.args.extra_index_url]
                 index_label = self.args.extra_index_url
@@ -535,7 +515,6 @@ class Installer:
                 index_args = ["-i", f"https://download.pytorch.org/whl/{cand}"]
                 index_label = index_args[1]
 
-            # first quick validate - check that a wheel exists for torch (no heavy installs yet)
             check_spec = "torch"
             log(
                 "info",
@@ -558,14 +537,16 @@ class Installer:
                     + index_args
                     + ["--extra-index-url", self.args.extra_index_url]
                 )
-                code, out, err = run(cmd)
-                files = os.listdir(tmpd)
+                # use streaming so user sees progress of pip download step
+                code, out, err = self.run_stream(
+                    cmd, task_name="torch.validate", show_stdout=True
+                )
+                files = os.listdir(tmpd) if os.path.isdir(tmpd) else []
                 if code == 0 and any(f.endswith(".whl") for f in files):
                     log(
                         "ok",
                         f"Found torch wheel(s) on {index_label}. Proceeding to install trio using that index.",
                     )
-                    # build install names
                     pkg_names = ["torch"]
                     if tv_ver:
                         pkg_names.append(f"torchvision=={tv_ver}")
@@ -584,7 +565,12 @@ class Installer:
                     )
                     if no_deps:
                         install_cmd.append("--no-deps")
-                    code2, out2, err2 = run(install_cmd)
+                    # ensure progress forced
+                    if "--progress-bar=on" not in install_cmd:
+                        install_cmd += ["--progress-bar=on", "-v"]
+                    code2, out2, err2 = self.run_stream(
+                        install_cmd, task_name="torch.trio", show_stdout=True
+                    )
                     if code2 == 0:
                         log(
                             "ok",
@@ -621,7 +607,6 @@ class Installer:
         try:
             tmod = importlib.import_module("torch")
             info["torch"] = getattr(tmod, "__version__", None)
-            # torch.version.cuda may exist
             try:
                 info["torch_cuda"] = getattr(tmod, "version").cuda
             except Exception:
@@ -647,16 +632,11 @@ class Installer:
     def trio_needs_install(
         self, candidate_tag: Optional[str]
     ) -> Tuple[bool, List[str]]:
-        """Return (need_install, reasons). If anything missing or mismatched we return True.
-        Heuristics: if torch missing -> True. If torch present but tag mismatch -> True. If torchvision/torchaudio missing -> True but optional.
-        Caller can decide to force reinstall.
-        """
         info = self.get_installed_torch_info()
         reasons = []
         if not info.get("torch"):
             reasons.append("torch not installed")
             return True, reasons
-        # check tag
         if candidate_tag and candidate_tag != "cpu":
             tv = info.get("torch") or ""
             if candidate_tag not in tv:
@@ -669,12 +649,10 @@ class Installer:
                         )
                 else:
                     reasons.append("installed torch has no cuda metadata to verify tag")
-        # missing extras
         if not info.get("torchvision"):
             reasons.append("torchvision missing")
         if not info.get("torchaudio"):
             reasons.append("torchaudio missing")
-        # if critical reasons present (torch missing or mismatch), require install; if only missing optional libs, also return True but note as non-critical
         critical = [r for r in reasons if r.startswith("torch not") or "mismatch" in r]
         if critical or reasons:
             return True, reasons
@@ -695,10 +673,327 @@ class Installer:
             ]
         )
 
+    # -------------------- streaming & parsing runner --------------------
+    # The runner streams stdout/stderr, writes to logfile, forwards lines to console,
+    # updates self.metrics for the given task_name when patterns are matched.
+    def run_stream(
+        self,
+        cmd: List[str],
+        task_name: Optional[str] = None,
+        show_stdout: bool = True,
+        show_stderr: bool = True,
+        capture: bool = True,
+        heartbeat: Optional[int] = None,
+    ) -> Tuple[int, str, str]:
+        if heartbeat is None:
+            heartbeat = self.heartbeat
+
+        # ensure pip shows progress
+        if (
+            "pip" in " ".join(cmd)
+            and "--progress-bar=on" not in cmd
+            and self.args.always_progress
+        ):
+            cmd = cmd + ["--progress-bar=on", "-v"]
+
+        # initialize metric for task
+        if task_name:
+            if task_name not in self.metrics:
+                self.metrics[task_name] = {
+                    "name": task_name,
+                    "status": "running",
+                    "start_ts": time.time(),
+                    "end_ts": None,
+                    "downloaded_bytes": 0,
+                    "total_bytes": None,
+                    "speed_bps": 0.0,
+                    "attempts": 1,
+                    "logs": [],
+                }
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            universal_newlines=True,
+        )
+
+        stdout_q = queue.Queue()
+        stderr_q = queue.Queue()
+
+        def _reader(pipe, q):
+            try:
+                for line in iter(pipe.readline, ""):
+                    q.put(line)
+            finally:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+        t_out = threading.Thread(
+            target=_reader, args=(proc.stdout, stdout_q), daemon=True
+        )
+        t_err = threading.Thread(
+            target=_reader, args=(proc.stderr, stderr_q), daemon=True
+        )
+        t_out.start()
+        t_err.start()
+
+        stdout_lines = []
+        stderr_lines = []
+
+        last_activity = time.time()
+        sliding = []  # (timestamp, downloaded_bytes) for speed calc
+
+        # regex patterns
+        # Examples pip outputs:
+        # Downloading torch-2.0.0-cp310-cp310-manylinux...whl (150.0 MB)
+        re_downloading = re.compile(
+            r"Downloading.*\((?P<size>[\d\.]+)\s*(?P<unit>kB|KB|MB|GB)\)", re.IGNORECASE
+        )
+        re_saved = re.compile(
+            r"Saved\s+.*\((?P<size_bytes>\d+)\s*bytes\)", re.IGNORECASE
+        )
+        re_saved_alt = re.compile(
+            r"Downloaded\s+(?P<size>[\d\.]+)\s*(?P<unit>kB|KB|MB|GB)", re.IGNORECASE
+        )
+        re_using_cached = re.compile(r"Using cached (?P<fname>.*\.whl)", re.IGNORECASE)
+        re_success = re.compile(r"Successfully installed (?P<pkgs>.*)", re.IGNORECASE)
+        re_collecting = re.compile(
+            r"Collecting\s+(?P<name>[\w\-\._\[\]=]+)", re.IGNORECASE
+        )
+
+        while True:
+            try:
+                try:
+                    line = stdout_q.get_nowait()
+                except queue.Empty:
+                    line = None
+
+                if line is None:
+                    try:
+                        err_line = stderr_q.get_nowait()
+                    except queue.Empty:
+                        err_line = None
+                else:
+                    err_line = None
+
+                if line:
+                    last_activity = time.time()
+                    self.logfile.write(f"[OUT {time.time()}] {' '.join(cmd)} | {line}")
+                    if show_stdout:
+                        if RICH:
+                            CONSOLE.print(line.rstrip())
+                        else:
+                            print(line.rstrip())
+                    if capture:
+                        stdout_lines.append(line)
+                    # parse pip-like lines
+                    if task_name:
+                        m = re_downloading.search(line)
+                        if m:
+                            size = float(m.group("size"))
+                            unit = m.group("unit").lower()
+                            mul = {
+                                "kb": 1024,
+                                "kB": 1024,
+                                "mb": 1024 * 1024,
+                                "gb": 1024**3,
+                            }
+                            mul = {
+                                "kb": 1024,
+                                "kb": 1024,
+                                "mb": 1024 * 1024,
+                                "gb": 1024**3,
+                            }
+                            if unit.startswith("k"):
+                                total = int(size * 1024)
+                            elif unit.startswith("m"):
+                                total = int(size * 1024 * 1024)
+                            elif unit.startswith("g"):
+                                total = int(size * 1024 * 1024 * 1024)
+                            else:
+                                total = int(size)
+                            self.metrics[task_name]["total_bytes"] = total
+                        m2 = re_saved.search(line)
+                        if m2:
+                            try:
+                                b = int(m2.group("size_bytes"))
+                                # accumulate downloaded bytes
+                                self.metrics[task_name]["downloaded_bytes"] = max(
+                                    self.metrics[task_name].get("downloaded_bytes", 0),
+                                    b,
+                                )
+                                sliding.append(
+                                    (
+                                        time.time(),
+                                        self.metrics[task_name]["downloaded_bytes"],
+                                    )
+                                )
+                            except Exception:
+                                pass
+                        m3 = re_saved_alt.search(line)
+                        if m3:
+                            try:
+                                size = float(m3.group("size"))
+                                unit = m3.group("unit").lower()
+                                if unit.startswith("k"):
+                                    b = int(size * 1024)
+                                elif unit.startswith("m"):
+                                    b = int(size * 1024 * 1024)
+                                elif unit.startswith("g"):
+                                    b = int(size * 1024 * 1024 * 1024)
+                                else:
+                                    b = int(size)
+                                self.metrics[task_name]["downloaded_bytes"] = max(
+                                    self.metrics[task_name].get("downloaded_bytes", 0),
+                                    b,
+                                )
+                                sliding.append(
+                                    (
+                                        time.time(),
+                                        self.metrics[task_name]["downloaded_bytes"],
+                                    )
+                                )
+                            except Exception:
+                                pass
+                        m4 = re_using_cached.search(line)
+                        if m4:
+                            # cached wheel; we don't know size here but mark it
+                            self.metrics[task_name]["status"] = "using_cached"
+                        m5 = re_success.search(line)
+                        if m5:
+                            self.metrics[task_name]["status"] = "installed"
+                            self.metrics[task_name]["end_ts"] = time.time()
+
+                    continue
+
+                if err_line:
+                    last_activity = time.time()
+                    self.logfile.write(
+                        f"[ERR {time.time()}] {' '.join(cmd)} | {err_line}"
+                    )
+                    if show_stderr:
+                        if RICH:
+                            CONSOLE.print(f"[red]{err_line.rstrip()}[/red]")
+                        else:
+                            print(err_line.rstrip(), file=sys.stderr)
+                    if capture:
+                        stderr_lines.append(err_line)
+                    # parse stderr for "Saved" etc as well
+                    if task_name:
+                        m2 = re_saved.search(err_line)
+                        if m2:
+                            try:
+                                b = int(m2.group("size_bytes"))
+                                self.metrics[task_name]["downloaded_bytes"] = max(
+                                    self.metrics[task_name].get("downloaded_bytes", 0),
+                                    b,
+                                )
+                                sliding.append(
+                                    (
+                                        time.time(),
+                                        self.metrics[task_name]["downloaded_bytes"],
+                                    )
+                                )
+                            except Exception:
+                                pass
+                        m5 = re_success.search(err_line)
+                        if m5:
+                            self.metrics[task_name]["status"] = "installed"
+                            self.metrics[task_name]["end_ts"] = time.time()
+                    continue
+
+                # no immediate output
+                if proc.poll() is not None:
+                    # drain remaining
+                    while not stdout_q.empty():
+                        l = stdout_q.get_nowait()
+                        self.logfile.write(f"[OUT {time.time()}] {' '.join(cmd)} | {l}")
+                        if show_stdout:
+                            if RICH:
+                                CONSOLE.print(l.rstrip())
+                            else:
+                                print(l.rstrip())
+                        if capture:
+                            stdout_lines.append(l)
+                    while not stderr_q.empty():
+                        l = stderr_q.get_nowait()
+                        self.logfile.write(f"[ERR {time.time()}] {' '.join(cmd)} | {l}")
+                        if show_stderr:
+                            if RICH:
+                                CONSOLE.print(f"[red]{l.rstrip()}[/red]")
+                            else:
+                                print(l.rstrip(), file=sys.stderr)
+                        if capture:
+                            stderr_lines.append(l)
+                    break
+
+                # heartbeat if nothing printed recently
+                if time.time() - last_activity > heartbeat:
+                    if task_name and self.metrics.get(task_name):
+                        # estimate speed from sliding window
+                        if len(sliding) >= 2:
+                            t0, b0 = sliding[0]
+                            t1, b1 = sliding[-1]
+                            dt = max(0.001, t1 - t0)
+                            db = max(0, b1 - b0)
+                            speed = db / dt
+                            self.metrics[task_name]["speed_bps"] = (
+                                0.8 * self.metrics[task_name].get("speed_bps", 0)
+                                + 0.2 * speed
+                            )
+                        # print a short heartbeat summarizing progress
+                        db = self.metrics[task_name].get("downloaded_bytes", 0)
+                        tb = self.metrics[task_name].get("total_bytes")
+                        if RICH:
+                            if tb:
+                                CONSOLE.print(
+                                    f"[cyan][{_now()}] {task_name}: {db/1024/1024:.2f} MB / {tb/1024/1024:.2f} MB • {self.metrics[task_name].get('speed_bps',0)/1024/1024:.2f} MB/s[/cyan]"
+                                )
+                            else:
+                                CONSOLE.print(
+                                    f"[cyan][{_now()}] {task_name}: {db/1024/1024:.2f} MB downloaded • {self.metrics[task_name].get('speed_bps',0)/1024/1024:.2f} MB/s[/cyan]"
+                                )
+                        else:
+                            print(
+                                f"[{_now()}] {task_name}: {db/1024/1024:.2f} MB downloaded"
+                            )
+                    else:
+                        if RICH:
+                            CONSOLE.print(
+                                f"[cyan][{_now()}] running: {' '.join(cmd)}[/cyan]"
+                            )
+                        else:
+                            print(f"[{_now()}] running: {' '.join(cmd)}")
+                    last_activity = time.time()
+                time.sleep(0.1)
+            except KeyboardInterrupt:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                raise
+
+        code = proc.returncode
+        # finalize metrics
+        if task_name and self.metrics.get(task_name):
+            if self.metrics[task_name].get("end_ts") is None:
+                self.metrics[task_name]["end_ts"] = time.time()
+            if code == 0 and self.metrics[task_name].get("status") != "installed":
+                # mark installed if pip succeeded
+                self.metrics[task_name]["status"] = "installed"
+        return (
+            code,
+            "".join(stdout_lines) if capture else "",
+            "".join(stderr_lines) if capture else "",
+        )
+
     # -------------------- task execution --------------------
     def install_task(self, task: PackageTask) -> bool:
         """Generic installer for a PackageTask. Respects wheel_spec / install_args. Also checks already-present for non-machine deps."""
-        # short-circuit: ffmpeg handled specially
         if task.name == "ffmpeg":
             ok = self.detect_ffmpeg()
             if ok:
@@ -709,16 +1004,13 @@ class Installer:
                 log("warn", "ffmpeg not installed on system PATH")
                 return False
 
-        # non-machine dep check: if wheel_spec looks like 'name>=..' we do presence check
         if task.reason == "non-machine dep" or task.name in [
             t.split("==")[0] for t in NON_MACHINE_DEPS
         ]:
-            # use heuristic check
             if package_already_present(task.wheel_spec or task.name):
                 self.summary["already"].append(task.name)
                 log("info", f"{task.name} already present; skipping install")
                 return True
-            # else fallthrough to install
 
         pip_cmd = [sys.executable, "-m", "pip", "install"]
         if task.wheel_spec:
@@ -730,26 +1022,78 @@ class Installer:
         if self.args.no_deps:
             pip_cmd.append("--no-deps")
 
-        log("info", f"Installing {task.name}...")
-        code, out, err = run(pip_cmd)
+        # force visible pip progress when possible
+        if "--progress-bar=on" not in pip_cmd and self.args.always_progress:
+            pip_cmd += ["--progress-bar=on", "-v"]
+
+        log("info", f"Installing {task.name}... (this may take a few minutes)")
+
+        # run with streaming UI
+        code, out, err = self.run_stream(
+            pip_cmd,
+            task_name=task.name,
+            show_stdout=(self.args.verbose or True),
+            show_stderr=(self.args.verbose or True),
+            capture=True,
+        )
+
         if code == 0:
             self.summary["installed"].append(task.name)
             log("ok", f"Installed {task.name}")
             return True
         else:
             self.summary["failed"].append(task.name)
-            log("error", f"Failed to install {task.name}: {out} {err}")
+            log("error", f"Failed to install {task.name}: returncode={code}")
+            # show tail of logs for clarity
+            tail = err.splitlines()[-10:] if err else []
+            if tail:
+                log("error", "Last pip stderr lines:\n" + "\n".join(tail))
             return False
 
     # -------------------- execute flow --------------------
     def execute(self):
         env = self.detect_system()
-        # make sure rich available for pretty UI
         ensure_rich(self.args.no_deps)
+        # re-import / bind rich UI objects now that rich should be available
+        try:
+            from rich.console import Console as _RichConsole
+            from rich.table import Table as _RichTable
+            from rich.panel import Panel as _RichPanel
+
+            CONSOLE = _RichConsole()
+            Table = _RichTable
+            Panel = _RichPanel
+            log("ok", "Rich UI bound for phase-2 (Table/Panel available).")
+        except Exception as _e:
+            log(
+                "warn",
+                f"Rich UI not bound after install: {_e} — falling back to ANSI logging.",
+            )
+
+        missing = [s for s in NON_MACHINE_DEPS if not package_already_present(s)]
+        if missing:
+            log("info", f"Non-machine packages missing: {missing}")
+            pip_cmd = [sys.executable, "-m", "pip", "install"] + missing
+            if self.args.no_deps:
+                pip_cmd.append("--no-deps")
+            # streaming here so user sees progress
+            if "--progress-bar=on" not in pip_cmd and self.args.always_progress:
+                pip_cmd += ["--progress-bar=on", "-v"]
+            code, out, err = self.run_stream(
+                pip_cmd, task_name="non-machine", show_stdout=True
+            )
+            if code == 0:
+                log("ok", "Installed missing non-machine packages")
+            else:
+                log("warn", f"Some non-machine installs failed: {err}")
+        else:
+            log("ok", "All non-machine dependencies already present")
+
+        installer = self  # self is installer
         # prepare queue
         queue = self.plan_queue(env)
 
-        # --- PyTorch auto-detect + install logic ---
+        # PyTorch logic
         if self.args.auto_detect_torch:
             cuda_rt = self.detect_cuda_runtime()
             tags = self.cuda_runtime_to_tags(cuda_rt)
@@ -758,7 +1102,6 @@ class Installer:
 
             need_install, reasons = self.trio_needs_install(candidate_tag)
             if not need_install:
-                # trio looks OK - add to summary as already
                 info = self.get_installed_torch_info()
                 self.summary["already"].append("torch")
                 if info.get("torchvision"):
@@ -766,7 +1109,6 @@ class Installer:
                 if info.get("torchaudio"):
                     self.summary["already"].append("torchaudio")
                 log("ok", f"Existing torch trio seems OK: {info}")
-                # remove trio tasks from queue if present
                 queue = [
                     q
                     for q in queue
@@ -794,7 +1136,6 @@ class Installer:
                             "Auto reinstall of trio failed; will fall back to normal queue",
                         )
                 else:
-                    # try to install only missing pieces (best-effort)
                     info = self.get_installed_torch_info()
                     missing = []
                     if not info.get("torch"):
@@ -804,7 +1145,6 @@ class Installer:
                     if not info.get("torchaudio"):
                         missing.append("torchaudio")
                     if missing:
-                        # run the try_install on tags which installs trio (pip will skip already present ones or upgrade them)
                         installed = self.try_install_torch_trio(
                             tags, no_deps=self.args.no_deps
                         )
@@ -821,37 +1161,35 @@ class Installer:
                                 "Auto-install attempt for missing trio parts failed; continuing with regular queue",
                             )
 
-        # Show planned queue in a table — robust: filter out items already recorded in summary['already']
         visible_queue = [q for q in queue if q.name not in self.summary["already"]]
         if RICH:
-            table = Table(title="Planned install queue", show_lines=True)
-            table.add_column("#", style="bold")
-            table.add_column("Package")
-            table.add_column("Spec")
-            table.add_column("Optional")
-            table.add_column("Notes")
-            for i, t in enumerate(visible_queue, 1):
-                table.add_row(
+            t = Table(title="Planned install queue", show_lines=True)
+            t.add_column("#", style="bold")
+            t.add_column("Package")
+            t.add_column("Spec")
+            t.add_column("Optional")
+            t.add_column("Notes")
+            for i, tt in enumerate(visible_queue, 1):
+                t.add_row(
                     str(i),
-                    t.name,
-                    t.wheel_spec or "-",
-                    str(t.optional),
-                    t.reason or "-",
+                    tt.name,
+                    tt.wheel_spec or "-",
+                    str(tt.optional),
+                    tt.reason or "-",
                 )
-            CONSOLE.print(table)
+            CONSOLE.print(t)
         else:
             log("info", "Planned install queue:")
-            for i, t in enumerate(visible_queue, 1):
+            for i, tt in enumerate(visible_queue, 1):
                 log(
                     "info",
-                    f"{i}. {t.name} spec={t.wheel_spec or '-'} optional={t.optional} notes={t.reason or '-'}",
+                    f"{i}. {tt.name} spec={tt.wheel_spec or '-'} optional={tt.optional} notes={tt.reason or '-'}",
                 )
 
         if self.args.dry_run:
             log("warn", "Dry-run: not performing any installs. Exiting.")
             return
 
-        # Install remaining tasks
         for t in visible_queue:
             ok = self.install_task(t)
             if not ok and not t.optional:
@@ -861,11 +1199,25 @@ class Installer:
                 )
                 break
 
-        # Final summary
         self._print_summary()
 
     def _print_summary(self):
         total_time = time.time() - self.start
+        # write metrics to file
+        try:
+            metrics_out = {
+                "summary": self.summary,
+                "start_ts": self.start,
+                "end_ts": time.time(),
+                "elapsed_s": total_time,
+                "packages": self.metrics,
+            }
+            with open(self.args.metrics_file, "w") as f:
+                json.dump(metrics_out, f, indent=2)
+            log("ok", f"Wrote install metrics to {self.args.metrics_file}")
+        except Exception as e:
+            log("warn", f"Failed to write metrics file: {e}")
+
         if RICH:
             t = Table(title="Installation summary", show_lines=True)
             t.add_column("Status")
@@ -884,6 +1236,10 @@ class Installer:
             log("info", f"Total time: {total_time:.1f}s")
 
     def cleanup(self):
+        try:
+            self.logfile.close()
+        except Exception:
+            pass
         try:
             shutil.rmtree(self.tempdir)
         except Exception:
@@ -934,6 +1290,34 @@ def parse_args():
         action="store_true",
         help="force uninstall+reinstall of torch trio if mismatch",
     )
+    ap.add_argument(
+        "--metrics-file",
+        default="install_metrics.json",
+        help="Path to write install metrics",
+    )
+    ap.add_argument(
+        "--retries", type=int, default=3, help="Retry attempts for failed installs"
+    )
+    ap.add_argument(
+        "--heartbeat",
+        type=int,
+        default=4,
+        help="Seconds of silence before heartbeat message",
+    )
+    ap.add_argument(
+        "--prefetch-sizes",
+        action="store_true",
+        help="(opt-in) try to prefetch wheel sizes via HEAD (experimental)",
+    )
+    ap.add_argument(
+        "--verbose", action="store_true", help="Show raw pip output as it arrives"
+    )
+    ap.add_argument(
+        "--always-progress",
+        action="store_true",
+        dest="always_progress",
+        help="Force pip --progress-bar=on and -v when possible",
+    )
     return ap.parse_args()
 
 
@@ -946,13 +1330,10 @@ def main():
     args = parse_args()
     signal.signal(signal.SIGINT, _signal_handler)
 
-    # Phase-1: install non-machine deps but only missing ones
-    # --- ensure rich is importable and bind rich objects for UI ---
     ensure_rich(args.no_deps)
 
     # re-import / bind rich UI objects now that rich should be available
     try:
-        # import specific objects into module globals so later code can use Table, Panel, CONSOLE
         from rich.console import Console as _RichConsole
         from rich.table import Table as _RichTable
         from rich.panel import Panel as _RichPanel
@@ -960,23 +1341,22 @@ def main():
         CONSOLE = _RichConsole()
         Table = _RichTable
         Panel = _RichPanel
-        RICH = True
         log("ok", "Rich UI bound for phase-2 (Table/Panel available).")
     except Exception as _e:
-        # keep fallback behavior (ANSI logs)
-        RICH = False
         log(
             "warn",
             f"Rich UI not bound after install: {_e} — falling back to ANSI logging.",
         )
 
-    # check for missing non-machine deps & install only those
     missing = [s for s in NON_MACHINE_DEPS if not package_already_present(s)]
     if missing:
         log("info", f"Non-machine packages missing: {missing}")
         pip_cmd = [sys.executable, "-m", "pip", "install"] + missing
         if args.no_deps:
             pip_cmd.append("--no-deps")
+        # stream so user sees progress
+        if "--progress-bar=on" not in pip_cmd and args.always_progress:
+            pip_cmd += ["--progress-bar=on", "-v"]
         code, out, err = run(pip_cmd)
         if code == 0:
             log("ok", "Installed missing non-machine packages")
