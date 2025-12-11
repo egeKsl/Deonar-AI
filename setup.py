@@ -43,7 +43,7 @@ NON_MACHINE_DEPS = [
     "av>=10.0.0",
     "Pillow>=10.0.0",
     "aiohttp>=3.8.0",
-    "aiortc>=3.0.0",
+    "aiortc>=1.14.0",
     "boto3>=1.28.0",
     "flask>=3.0.0",
     "python-dotenv>=1.0.0",
@@ -69,7 +69,7 @@ PYTHON_SUPPORT_MAP = {
     "torchaudio": (3, 8, 3, 12),
     "opencv": (3, 8, 3, 12),
     "av": (3, 8, 3, 12),
-    "aiortc": (3, 10, 3, 12),  # aiortc 3.x requires newer Python in many builds
+    "aiortc": (3, 8, 3, 12),  # aiortc 3.x requires newer Python in many builds
     "aiohttp": (3, 8, 3, 12),
     "Pillow": (3, 8, 3, 12),
     "boto3": (3, 8, 3, 12),
