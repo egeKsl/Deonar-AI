@@ -1,0 +1,615 @@
+#!/usr/bin/env python3
+"""
+setup_installer.py
+
+Robust two-phase installer:
+1) Installs the non-machine-dependent Python packages (a single bulk pip install)
+   so utilities like `rich` are present for a nicer UI.
+2) Re-runs with the full, rich-enabled UI to detect system details and
+   install machine-dependent packages (PyTorch wheels, cuda-python, nvidia-ml-py,
+   OpenCV variant and ffmpeg validation).
+
+Design goals applied:
+- Do not import optional UI libraries (rich) until after the safe deps are
+  installed in phase 1 so the user can run this script on a fresh environment.
+- Bulk installs non-machine-dependent deps first (single pip invocation).
+- Clear, colored console fallback before rich is available.
+- Validate PyTorch wheel availability before trying to install it.
+- Detect headless environment and recommend opencv-python-headless.
+- Validate ffmpeg and provide OS-specific hints.
+- Respect dry-run, --no-deps flags and allow the user to opt-out of
+  auto-installing machine-dependent packages.
+
+Usage:
+  python setup_installer.py                # interactive flow; will attempt phase1 then phase2
+  python setup_installer.py --dry-run     # show what would happen, do not install
+  python setup_installer.py --torch-version 2.7.0 --install-cuda-python --install-nvidia-ml
+
+Note: This script runs pip as a subprocess. Read outputs carefully before
+re-running with different flags.
+"""
+
+from __future__ import annotations
+import argparse
+import os
+import platform
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+# --------------------- Phase-1: non-machine deps ---------------------
+# These are the packages we will install first so that the nice UI (rich)
+# becomes available for the remainder of the installer.
+NON_MACHINE_DEPS = [
+    "ultralytics>=8.0.0",
+    "numpy>=1.26.0",
+    "av>=10.0.0",
+    "Pillow>=10.0.0",
+    "aiohttp>=3.8.0",
+    "aiortc>=3.0.0",
+    "boto3>=1.28.0",
+    "flask>=3.0.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.1",
+    "rich>=13.6.0",
+    "filterpy>=1.4.5",
+    "scipy>=1.11.0",
+    "lap>=0.4.0",
+    "tqdm>=4.66.1",
+    # Dev/testing (optional but harmless to install in Phase-1)
+    "pytest>=7.4.0",
+    "black>=23.9.1",
+    "isort>=5.12.0",
+    "flake8>=6.1.0",
+]
+
+
+def run(
+    cmd: List[str], capture: bool = True, env=None, check: bool = False
+) -> Tuple[int, str, str]:
+    """Run a subprocess and capture output."""
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.PIPE if capture else None,
+            env=env,
+        )
+        out, err = proc.communicate()
+        stdout = out.decode(errors="ignore") if out else ""
+        stderr = err.decode(errors="ignore") if err else ""
+        if check and proc.returncode != 0:
+            raise subprocess.CalledProcessError(
+                proc.returncode, cmd, output=stdout, stderr=stderr
+            )
+        return proc.returncode, stdout, stderr
+    except FileNotFoundError:
+        return 127, "", f"Executable not found: {cmd[0]}"
+
+
+def simple_print(msg: str) -> None:
+    # ANSI-safe print (used before rich installed)
+    print(msg)
+
+
+def install_non_machine_deps(dry_run: bool = False, no_deps: bool = False) -> bool:
+    """Install NON_MACHINE_DEPS in bulk. Returns True on success (or dry-run).
+    We bulk-install in one pip invocation to speed up the process and avoid
+    partial installation edge cases.
+    """
+    if dry_run:
+        simple_print("[dry-run] Would install non-machine dependencies: ")
+        for p in NON_MACHINE_DEPS:
+            simple_print("  - " + p)
+        return True
+
+    pip_cmd = [sys.executable, "-m", "pip", "install"] + NON_MACHINE_DEPS
+    if no_deps:
+        pip_cmd.append("--no-deps")
+    simple_print(
+        "Installing non-machine-dependent packages (this may take a few minutes)..."
+    )
+    code, out, err = run(pip_cmd, capture=True)
+    if code == 0:
+        simple_print("Non-machine dependencies installed successfully.")
+        return True
+    else:
+        simple_print(
+            "Failed to install non-machine dependencies. See pip output below:"
+        )
+        simple_print(out)
+        simple_print(err)
+        return False
+
+
+# --------------------- After Phase-1 we import rich ---------------------
+try:
+    from rich import box
+    from rich.console import Console
+    from rich.progress import (
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        BarColumn,
+        TimeElapsedColumn,
+    )
+    from rich.table import Table
+    from rich.text import Text
+
+    CONSOLE = Console()
+
+    def styled(msg, style=""):
+        CONSOLE.print(msg, style=style)
+
+    RICH_AVAILABLE = True
+except Exception:
+    # If rich still isn't importable, fall back to simple_print
+    RICH_AVAILABLE = False
+
+    def styled(msg, style=""):
+        simple_print(msg)
+
+
+# --------------------- System detection utilities ---------------------
+
+
+def is_root() -> bool:
+    if os.name == "nt":
+        return False
+    try:
+        return os.geteuid() == 0
+    except Exception:
+        return False
+
+
+def detect_nvidia_smi() -> Optional[dict]:
+    """Return a dict with nvidia-smi parsed info if available."""
+    code, out, err = run(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,driver_version,count",
+            "--format=csv,noheader",
+        ],
+        capture=True,
+    )
+    if code != 0:
+        return None
+    lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip()]
+    if not lines:
+        return None
+    names = []
+    driver = None
+    total_gpus = 0
+    for ln in lines:
+        parts = [p.strip() for p in ln.split(",")]
+        if len(parts) >= 3:
+            name, driver_version, count = parts[0], parts[1], parts[2]
+            names.append(name)
+            driver = driver_version
+            try:
+                total_gpus += int(count)
+            except Exception:
+                total_gpus += 1
+    return {"gpus": total_gpus, "names": names, "driver": driver}
+
+
+def detect_ffmpeg() -> bool:
+    code, out, err = run(["ffmpeg", "-version"], capture=True)
+    return code == 0
+
+
+def is_headless() -> bool:
+    if sys.platform.startswith("linux") or sys.platform == "darwin":
+        if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+            return False
+        return True
+    return False
+
+
+@dataclass
+class PackageTask:
+    name: str
+    wheel_spec: Optional[str] = None
+    install_args: Optional[List[str]] = None
+    optional: bool = False
+    reason: Optional[str] = None
+
+
+class Installer:
+    def __init__(self, args):
+        self.args = args
+        self.queue: List[PackageTask] = []
+        self.tempdir = tempfile.mkdtemp(prefix="setup_installer_")
+        self.start_time = time.time()
+
+    def detect_system(self):
+        styled("[bold]Detecting system environment...[/bold]")
+        n = detect_nvidia_smi()
+        if n:
+            styled(
+                f"[green]nvidia-smi found:[/green] GPUs={n['gpus']} driver={n['driver']} names={n['names']}"
+            )
+        else:
+            styled(
+                "[yellow]nvidia-smi not available or returned non-zero. GPU info unknown.[/yellow]"
+            )
+        ff = detect_ffmpeg()
+        if ff:
+            styled("[green]ffmpeg detected on PATH.[/green]")
+        else:
+            styled(
+                "[yellow]ffmpeg not detected. Some packages (av, aiortc) may require ffmpeg installed on system.[/yellow]"
+            )
+        headless = is_headless()
+        if headless:
+            styled(
+                "[yellow]Headless environment detected. Will recommend opencv-python-headless.[/yellow]"
+            )
+        else:
+            styled(
+                "[green]Display server detected. GUI-capable OpenCV wheel recommended.[/green]"
+            )
+        return {"nvidia": n, "ffmpeg": ff, "headless": headless}
+
+    def plan_queue(self, env):
+        torch_ver = self.args.torch_version
+        cuda_tag = self.args.cuda_tag
+        index_url = self.args.index_url
+        extra_index = self.args.extra_index_url
+
+        if torch_ver:
+            torch_spec = (
+                f"torch=={torch_ver}+{cuda_tag}" if cuda_tag else f"torch=={torch_ver}"
+            )
+            tv_spec = (
+                f"torchvision=={self.args.torchvision_version}+{cuda_tag}"
+                if self.args.torchvision_version
+                else None
+            )
+            ta_spec = (
+                f"torchaudio=={self.args.torchaudio_version}+{cuda_tag}"
+                if self.args.torchaudio_version
+                else None
+            )
+            self.queue.append(
+                PackageTask(
+                    name="torch",
+                    wheel_spec=torch_spec,
+                    install_args=["-i", index_url, "--extra-index-url", extra_index],
+                )
+            )
+            if tv_spec:
+                self.queue.append(
+                    PackageTask(
+                        name="torchvision",
+                        wheel_spec=tv_spec,
+                        install_args=[
+                            "-i",
+                            index_url,
+                            "--extra-index-url",
+                            extra_index,
+                        ],
+                    )
+                )
+            if ta_spec:
+                self.queue.append(
+                    PackageTask(
+                        name="torchaudio",
+                        wheel_spec=ta_spec,
+                        install_args=[
+                            "-i",
+                            index_url,
+                            "--extra-index-url",
+                            extra_index,
+                        ],
+                    )
+                )
+        else:
+            styled(
+                "[yellow]No torch_version provided; skipping PyTorch automatic install. User must install manually.[/yellow]"
+            )
+
+        if self.args.install_cuda_python:
+            self.queue.append(
+                PackageTask(
+                    name="cuda-python",
+                    wheel_spec=None,
+                    install_args=None,
+                    optional=True,
+                    reason="Provides Python bindings for CUDA runtime — may not be necessary if user uses system CUDA.",
+                )
+            )
+        if self.args.install_nvidia_ml:
+            self.queue.append(
+                PackageTask(
+                    name="nvidia-ml-py",
+                    wheel_spec=None,
+                    install_args=None,
+                    optional=True,
+                    reason="Used to query GPU telemetry via Python (pynvml).",
+                )
+            )
+
+        opencv_pkg = "opencv-python-headless" if env["headless"] else "opencv-python"
+        self.queue.append(
+            PackageTask(
+                name=opencv_pkg,
+                wheel_spec=f"{opencv_pkg}>={self.args.opencv_min}",
+                optional=False,
+            )
+        )
+
+        self.queue.append(
+            PackageTask(
+                name="ffmpeg",
+                wheel_spec=None,
+                install_args=None,
+                optional=True,
+                reason="System package — not installed via pip. Script will only validate presence and provide install hints.",
+            )
+        )
+
+        return self.queue
+
+    def validate_pytorch_wheels(self, task: PackageTask) -> bool:
+        if not task.wheel_spec:
+            return False
+        styled(
+            f"[blue]Validating availability of {task.wheel_spec} from index...[/blue]"
+        )
+        cmd = [
+            sys.executable,
+            "-m",
+            "pip",
+            "download",
+            "--no-deps",
+            "--only-binary=:all:",
+            task.wheel_spec,
+            "-d",
+            self.tempdir,
+        ]
+        if task.install_args:
+            cmd.extend(task.install_args)
+        code, out, err = run(cmd, capture=True)
+        files = os.listdir(self.tempdir)
+        if code == 0 and any(f.endswith(".whl") or ".tar.gz" in f for f in files):
+            styled(f"[green]Wheel found and downloaded to temp dir.[/green]")
+            for f in files:
+                try:
+                    os.remove(os.path.join(self.tempdir, f))
+                except Exception:
+                    pass
+            return True
+        else:
+            styled(
+                f"[red]Could not find wheel for {task.wheel_spec}. pip output:{out}{err}[/red]"
+            )
+            for f in os.listdir(self.tempdir):
+                try:
+                    os.remove(os.path.join(self.tempdir, f))
+                except Exception:
+                    pass
+            return False
+
+    def install_task(self, task: PackageTask) -> bool:
+        if task.name == "ffmpeg":
+            ok = detect_ffmpeg()
+            if ok:
+                styled("[green]ffmpeg is present on PATH.[/green]")
+                return True
+            styled(
+                "[yellow]ffmpeg not found. Please install system ffmpeg. Common commands:"
+            )
+            system = platform.system().lower()
+            if system == "linux":
+                styled(
+                    "apt (Debian/Ubuntu): sudo apt update && sudo apt install ffmpeg -y"
+                )
+                styled(
+                    "yum (CentOS/RHEL): sudo yum install epel-release && sudo yum install ffmpeg -y"
+                )
+            elif system == "darwin":
+                styled("brew install ffmpeg")
+            elif system == "windows":
+                styled(
+                    "choco install ffmpeg -y  OR download static builds from ffmpeg.org and add to PATH"
+                )
+            return False
+
+        pip_cmd = [sys.executable, "-m", "pip", "install"]
+        if task.wheel_spec:
+            pip_cmd.append(task.wheel_spec)
+        else:
+            pip_cmd.append(task.name)
+        if task.install_args:
+            pip_cmd.extend(task.install_args)
+        if self.args.no_deps:
+            pip_cmd.append("--no-deps")
+
+        styled(f"[cyan]Installing {task.name}...[/cyan]")
+        code, out, err = run(pip_cmd, capture=True)
+        if code == 0:
+            styled(f"[green]Installed {task.name} successfully.[/green]")
+            return True
+        else:
+            styled(f"[red]Failed to install {task.name}.")
+            styled(f"[yellow]Stdout:{out} Stderr: {err}[/yellow]")
+            return False
+
+    def execute(self):
+        env = self.detect_system()
+        queue = self.plan_queue(env)
+
+        if RICH_AVAILABLE:
+            table = Table(title="Planned install queue", box=box.SIMPLE_HEAVY)
+            table.add_column("#", style="bold")
+            table.add_column("Package")
+            table.add_column("Spec")
+            table.add_column("Optional")
+            table.add_column("Notes")
+            for i, t in enumerate(queue, 1):
+                table.add_row(
+                    str(i),
+                    t.name,
+                    t.wheel_spec or "-",
+                    str(t.optional),
+                    t.reason or "-",
+                )
+            CONSOLE.print(table)
+        else:
+            styled("Planned install queue:")
+            for i, t in enumerate(queue, 1):
+                styled(
+                    f"{i}. {t.name}  spec={t.wheel_spec or '-'} optional={t.optional} notes={t.reason or '-'}"
+                )
+
+        if self.args.dry_run:
+            styled(
+                "[bold yellow]Dry-run: no packages will actually be installed. Exiting.[/bold yellow]"
+            )
+            return
+
+        for t in [q for q in queue if q.name == "torch"]:
+            ok = self.validate_pytorch_wheels(t)
+            if not ok:
+                styled(
+                    "[red]PyTorch wheel validation failed. Will not attempt to install torch automatically.[/red]"
+                )
+                queue = [
+                    q
+                    for q in queue
+                    if q.name not in ("torch", "torchvision", "torchaudio")
+                ]
+                break
+
+        successes = []
+        failures = []
+        for t in queue:
+            success = self.install_task(t)
+            if success:
+                successes.append(t.name)
+            else:
+                failures.append(t.name)
+                if not t.optional:
+                    styled(
+                        f"[red]Fatal: required package {t.name} failed to install. Stopping further installs.[/red]"
+                    )
+                    break
+                else:
+                    styled(
+                        f"[yellow]Optional package {t.name} failed — continuing.[/yellow]"
+                    )
+
+        total_time = time.time() - self.start_time
+        styled(
+            f"[bold]Summary:[/bold] Installed: {successes}  Failed: {failures}. Time: {total_time:.1f}s"
+        )
+
+    def cleanup(self):
+        try:
+            shutil.rmtree(self.tempdir)
+        except Exception:
+            pass
+
+
+def parse_args():
+    ap = argparse.ArgumentParser(
+        description="Two-phase installer: stage1 installs non-machine deps, stage2 installs machine-dependent libs."
+    )
+    ap.add_argument(
+        "--torch-version",
+        default=None,
+        help="PyTorch base version (e.g., 2.7.0) — omit to skip auto-install",
+    )
+    ap.add_argument(
+        "--torchvision-version",
+        default=None,
+        help="torchvision version to match (optional)",
+    )
+    ap.add_argument(
+        "--torchaudio-version",
+        default=None,
+        help="torchaudio version to match (optional)",
+    )
+    ap.add_argument(
+        "--cuda-tag",
+        default="cu118",
+        help="CUDA tag used in wheel filenames (e.g., cu118, cu121)",
+    )
+    ap.add_argument(
+        "--index-url",
+        default="https://download.pytorch.org/whl/cu118",
+        help="Primary index for PyTorch wheels",
+    )
+    ap.add_argument(
+        "--extra-index-url",
+        default="https://pypi.org/simple",
+        help="Extra index for fallback pip packages",
+    )
+    ap.add_argument(
+        "--install-cuda-python",
+        action="store_true",
+        help="Attempt to pip install cuda-python (optional)",
+    )
+    ap.add_argument(
+        "--install-nvidia-ml",
+        action="store_true",
+        help="Attempt to pip install nvidia-ml-py (optional)",
+    )
+    ap.add_argument("--opencv-min", default="4.8.0", help="Minimum OpenCV version")
+    ap.add_argument(
+        "--no-deps",
+        action="store_true",
+        help="Pass --no-deps to pip installs (useful for minimal installs)",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Do not actually perform installs; only show plan",
+    )
+    return ap.parse_args()
+
+
+def _signal_handler(sig, frame):
+    styled("[red]Interrupted by user. Exiting...[/red]")
+    sys.exit(1)
+
+
+def main():
+    args = parse_args()
+    signal.signal(signal.SIGINT, _signal_handler)
+
+    # Phase-1: ensure the non-machine-dependent requirements are present so rich and
+    # other tooling are available for phase-2 UI and logging.
+    ok = install_non_machine_deps(dry_run=args.dry_run, no_deps=args.no_deps)
+    if not ok:
+        simple_print("Phase-1 failed. Aborting.")
+        sys.exit(1)
+
+    # Re-import rich (the script attempts earlier; if it failed earlier, now it should
+    # succeed because we installed rich in Phase-1). We keep the graceful fallback.
+    global RICH_AVAILABLE
+    try:
+        from rich import box  # type: ignore
+        from rich.console import Console  # type: ignore
+        from rich.table import Table  # type: ignore
+
+        CONSOLE = Console()
+        RICH_AVAILABLE = True
+    except Exception:
+        RICH_AVAILABLE = False
+
+    installer = Installer(args)
+    try:
+        installer.execute()
+    finally:
+        installer.cleanup()
+
+
+if __name__ == "__main__":
+    main()
