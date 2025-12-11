@@ -1,3 +1,9 @@
+# requirements.txt
+
+# ----------------------------------
+# machine dependent requirements
+# ----------------------------------
+
 # Primary index = PyTorch cu118 (search here first), fallback = PyPI
 --index-url https://download.pytorch.org/whl/cu118
 --extra-index-url https://pypi.org/simple
@@ -7,11 +13,22 @@ torch==2.7.0+cu118
 torchvision==0.22.0+cu118
 torchaudio==2.7.0+cu118
 
+# Image and Video Processing
+opencv-python>=4.8.0
+
+# Optional but recommended for better performance
+# If using CUDA enabled system:
+cuda-python>=12.0
+nvidia-ml-py>=12.535.77
+
+# ----------------------------------
+# non-machine dependent requirements
+# ----------------------------------
+
 # YOLO and Object Detection
 ultralytics>=8.0.0
 
-# Image and Video Processing
-opencv-python>=4.8.0
+
 numpy>=1.26.0
 av>=10.0.0
 Pillow>=10.0.0
@@ -36,11 +53,6 @@ lap>=0.4.0       # For Linear Assignment Problem in tracking
 
 # Progress and Logging
 tqdm>=4.66.1
-
-# Optional but recommended for better performance
-# If using CUDA enabled system:
-cuda-python>=12.0
-nvidia-ml-py>=12.535.77
 
 # Development and Testing (optional)
 pytest>=7.4.0
