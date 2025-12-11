@@ -1,5 +1,9 @@
 # requirements.txt
 
+# pre requirements:
+# Make sure to have Python 3.8+ installed
+# ffmpeg must be installed and accessible in your system PATH
+
 # ----------------------------------
 # machine dependent requirements
 # ----------------------------------
@@ -27,7 +31,6 @@ nvidia-ml-py>=12.535.77
 
 # YOLO and Object Detection
 ultralytics>=8.0.0
-
 
 numpy>=1.26.0
 av>=10.0.0
