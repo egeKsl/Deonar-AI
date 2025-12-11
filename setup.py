@@ -947,8 +947,28 @@ def main():
     signal.signal(signal.SIGINT, _signal_handler)
 
     # Phase-1: install non-machine deps but only missing ones
-    # ensure rich is installable early (so UI works)
+    # --- ensure rich is importable and bind rich objects for UI ---
     ensure_rich(args.no_deps)
+
+    # re-import / bind rich UI objects now that rich should be available
+    try:
+        # import specific objects into module globals so later code can use Table, Panel, CONSOLE
+        from rich.console import Console as _RichConsole
+        from rich.table import Table as _RichTable
+        from rich.panel import Panel as _RichPanel
+
+        CONSOLE = _RichConsole()
+        Table = _RichTable
+        Panel = _RichPanel
+        RICH = True
+        log("ok", "Rich UI bound for phase-2 (Table/Panel available).")
+    except Exception as _e:
+        # keep fallback behavior (ANSI logs)
+        RICH = False
+        log(
+            "warn",
+            f"Rich UI not bound after install: {_e} — falling back to ANSI logging.",
+        )
 
     # check for missing non-machine deps & install only those
     missing = [s for s in NON_MACHINE_DEPS if not package_already_present(s)]
