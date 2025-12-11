@@ -20,6 +20,17 @@ Design goals applied:
 - Respect dry-run, --no-deps flags and allow the user to opt-out of
   auto-installing machine-dependent packages.
 
+New feature (added): Python-version compatibility checks
+- Script prints a "sweet spot" Python version range at startup.
+- Before installing each package, the script checks whether the current
+  Python interpreter version falls within the package's declared supported
+  range (configurable in the script as `PYTHON_SUPPORT_MAP`).
+- If a package appears incompatible with current Python, the script logs a
+  clear, colored warning that shows the current version and the supported
+  range for that package. Required packages that are incompatible are
+  skipped and treated as failures; optional packages will be skipped with a
+  warning but the installer continues.
+
 Usage:
   python setup_installer.py                # interactive flow; will attempt phase1 then phase2
   python setup_installer.py --dry-run     # show what would happen, do not install
@@ -43,8 +54,6 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 # --------------------- Phase-1: non-machine deps ---------------------
-# These are the packages we will install first so that the nice UI (rich)
-# becomes available for the remainder of the installer.
 NON_MACHINE_DEPS = [
     "ultralytics>=8.0.0",
     "numpy>=1.26.0",
@@ -68,10 +77,38 @@ NON_MACHINE_DEPS = [
     "flake8>=6.1.0",
 ]
 
+# --------------------- Python version support map ---------------------
+# Each entry maps a package *key* (a substring matched against the package name)
+# to a supported Python version range (inclusive). You can expand this list
+# to tighten checks per-package. If a package is not present here we assume
+# "unknown" and do not block installation (but still show a hint).
+# Format: (min_major, min_minor, max_major, max_minor)
+PYTHON_SUPPORT_MAP = {
+    # Most modern scientific libs work on Python 3.8 - 3.12 in general
+    "numpy": (3, 8, 3, 12),
+    "scipy": (3, 8, 3, 12),
+    "torch": (3, 8, 3, 12),
+    "torchvision": (3, 8, 3, 12),
+    "torchaudio": (3, 8, 3, 12),
+    "opencv": (3, 8, 3, 12),
+    "av": (3, 8, 3, 12),
+    "aiortc": (3, 8, 3, 12),
+    "aiohttp": (3, 8, 3, 12),
+    "Pillow": (3, 8, 3, 12),
+    "boto3": (3, 8, 3, 12),
+    "flask": (3, 8, 3, 12),
+    "pyyaml": (3, 8, 3, 12),
+    "rich": (3, 8, 3, 12),
+    "filterpy": (3, 8, 3, 12),
+    "lap": (3, 8, 3, 12),
+    "tqdm": (3, 7, 3, 12),
+    # cuda-python and nvidia-ml-py: may require specific ranges depending on releases
+    "cuda-python": (3, 8, 3, 12),
+    "nvidia-ml-py": (3, 7, 3, 12),
+}
 
-def run(
-    cmd: List[str], capture: bool = True, env=None, check: bool = False
-) -> Tuple[int, str, str]:
+
+def run(cmd: List[str], capture: bool = True, env=None, check: bool = False) -> Tuple[int, str, str]:
     """Run a subprocess and capture output."""
     try:
         proc = subprocess.Popen(
@@ -97,6 +134,33 @@ def simple_print(msg: str) -> None:
     print(msg)
 
 
+def version_tuple() -> Tuple[int, int]:
+    return sys.version_info.major, sys.version_info.minor
+
+
+def version_in_range(cur: Tuple[int, int], rng: Tuple[int, int, int, int]) -> bool:
+    cur_major, cur_minor = cur
+    min_major, min_minor, max_major, max_minor = rng
+    if (cur_major, cur_minor) < (min_major, min_minor):
+        return False
+    if (cur_major, cur_minor) > (max_major, max_minor):
+        return False
+    return True
+
+
+def check_package_python_support(pkg_name: str) -> Tuple[bool, Optional[Tuple[int, int, int, int]]]:
+    """Return (is_supported, declared_range) for a package name by matching substrings.
+    If no mapping exists, return (True, None) — treat unknown as allowed but warn.
+    """
+    cur = version_tuple()
+    for key, rng in PYTHON_SUPPORT_MAP.items():
+        if key.lower() in pkg_name.lower():
+            ok = version_in_range(cur, rng)
+            return ok, rng
+    # unknown package — we don't block but warn
+    return True, None
+
+
 def install_non_machine_deps(dry_run: bool = False, no_deps: bool = False) -> bool:
     """Install NON_MACHINE_DEPS in bulk. Returns True on success (or dry-run).
     We bulk-install in one pip invocation to speed up the process and avoid
@@ -107,6 +171,24 @@ def install_non_machine_deps(dry_run: bool = False, no_deps: bool = False) -> bo
         for p in NON_MACHINE_DEPS:
             simple_print("  - " + p)
         return True
+
+    # Before installing, do a lightweight python-compat check across the bulk list
+    cur = version_tuple()
+    incompatible = []
+    for p in NON_MACHINE_DEPS:
+        # use package token before any '==' or '>='
+        pname = p.split()[0].split("=")[0].split(">")[0]
+        ok, rng = check_package_python_support(pname)
+        if not ok:
+            incompatible.append((pname, rng))
+    if incompatible:
+        simple_print("WARNING: Your Python interpreter may be incompatible with some non-machine deps:")
+        for name, rng in incompatible:
+            if rng:
+                simple_print(f"  - {name}: requires Python {rng[0]}.{rng[1]} - {rng[2]}.{rng[3]} but current is {cur[0]}.{cur[1]}")
+            else:
+                simple_print(f"  - {name}: no declared range, but proceed with caution — current Python {cur[0]}.{cur[1]}")
+        simple_print("You can continue, but consider using a virtualenv with a recommended Python version.")
 
     pip_cmd = [sys.executable, "-m", "pip", "install"] + NON_MACHINE_DEPS
     if no_deps:
@@ -229,6 +311,12 @@ class Installer:
 
     def detect_system(self):
         styled("[bold]Detecting system environment...[/bold]")
+        # Print Python "sweet spot" info
+        cur = version_tuple()
+        min_py = (self.args.py_min_major, self.args.py_min_minor)
+        max_py = (self.args.py_max_major, self.args.py_max_minor)
+        styled(f"[blue]Current Python:{cur[0]}.{cur[1]} — recommended range: {min_py[0]}.{min_py[1]} - {max_py[0]}.{max_py[1]}[/blue]")
+
         n = detect_nvidia_smi()
         if n:
             styled(
@@ -397,6 +485,20 @@ class Installer:
             return False
 
     def install_task(self, task: PackageTask) -> bool:
+        # Check python compatibility for this specific package before attempting install
+        ok, declared = check_package_python_support(task.name)
+        cur = version_tuple()
+        if declared is not None and not ok:
+            styled(
+                f"[red]Incompatible: {task.name} does not support Python {cur[0]}.{cur[1]}." \
+                f" Supported: {declared[0]}.{declared[1]} - {declared[2]}.{declared[3]}
+Skipping install." 
+            )
+            # Treat incompatible required packages as failures; optional packages as skipped
+            return task.optional
+        elif declared is None:
+            styled(f"[yellow]No explicit Python-range metadata for {task.name}; proceeding with caution.[/yellow]")
+
         if task.name == "ffmpeg":
             ok = detect_ffmpeg()
             if ok:
@@ -453,25 +555,15 @@ class Installer:
             table.add_column("Optional")
             table.add_column("Notes")
             for i, t in enumerate(queue, 1):
-                table.add_row(
-                    str(i),
-                    t.name,
-                    t.wheel_spec or "-",
-                    str(t.optional),
-                    t.reason or "-",
-                )
+                table.add_row(str(i), t.name, t.wheel_spec or "-", str(t.optional), t.reason or "-")
             CONSOLE.print(table)
         else:
             styled("Planned install queue:")
             for i, t in enumerate(queue, 1):
-                styled(
-                    f"{i}. {t.name}  spec={t.wheel_spec or '-'} optional={t.optional} notes={t.reason or '-'}"
-                )
+                styled(f"{i}. {t.name}  spec={t.wheel_spec or '-'} optional={t.optional} notes={t.reason or '-'}")
 
         if self.args.dry_run:
-            styled(
-                "[bold yellow]Dry-run: no packages will actually be installed. Exiting.[/bold yellow]"
-            )
+            styled("[bold yellow]Dry-run: no packages will actually be installed. Exiting.[/bold yellow]")
             return
 
         for t in [q for q in queue if q.name == "torch"]:
@@ -480,11 +572,7 @@ class Installer:
                 styled(
                     "[red]PyTorch wheel validation failed. Will not attempt to install torch automatically.[/red]"
                 )
-                queue = [
-                    q
-                    for q in queue
-                    if q.name not in ("torch", "torchvision", "torchaudio")
-                ]
+                queue = [q for q in queue if q.name not in ("torch", "torchvision", "torchaudio")]
                 break
 
         successes = []
@@ -572,6 +660,11 @@ def parse_args():
         action="store_true",
         help="Do not actually perform installs; only show plan",
     )
+    # Python sweet spot overrides
+    ap.add_argument("--py-min-major", type=int, default=3, help="Minimum Python major version (default 3)")
+    ap.add_argument("--py-min-minor", type=int, default=8, help="Minimum Python minor version (default 8)")
+    ap.add_argument("--py-max-major", type=int, default=3, help="Maximum Python major version (default 3)")
+    ap.add_argument("--py-max-minor", type=int, default=12, help="Maximum Python minor version (default 12)")
     return ap.parse_args()
 
 
