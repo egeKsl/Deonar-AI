@@ -491,8 +491,7 @@ class Installer:
         if declared is not None and not ok:
             styled(
                 f"[red]Incompatible: {task.name} does not support Python {cur[0]}.{cur[1]}." \
-                f" Supported: {declared[0]}.{declared[1]} - {declared[2]}.{declared[3]}
-Skipping install." 
+                f" Supported: {declared[0]}.{declared[1]} - {declared[2]}.{declared[3]} Skipping install." 
             )
             # Treat incompatible required packages as failures; optional packages as skipped
             return task.optional
