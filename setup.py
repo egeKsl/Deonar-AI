@@ -1084,6 +1084,18 @@ class Installer:
             )
             if code == 0:
                 log("ok", "Installed missing non-machine packages")
+
+                # ---- IMPORTANT: mark these non-machine deps as installed so the later queue won't try to install them ----
+                for spec in missing:
+                    # canonical token: trims version specifiers like 'numpy>=1.26.0' -> 'numpy'
+                    token = spec.split()[0].split("=")[0].split(">")[0].strip()
+                    if token and token not in self.summary["installed"]:
+                        self.summary["installed"].append(token)
+                log(
+                    "info",
+                    f"Marked non-machine packages as installed in summary: {self.summary['installed']}",
+                )
+                # ----------------------------------------------------------------------------------------------------------------
             else:
                 log("warn", f"Some non-machine installs failed: {err}")
         else:
@@ -1161,7 +1173,13 @@ class Installer:
                                 "Auto-install attempt for missing trio parts failed; continuing with regular queue",
                             )
 
-        visible_queue = [q for q in queue if q.name not in self.summary["already"]]
+        visible_queue = [
+            q
+            for q in queue
+            if q.name not in self.summary["already"]
+            and q.name not in self.summary["installed"]
+        ]
+
         if RICH:
             t = Table(title="Planned install queue", show_lines=True)
             t.add_column("#", style="bold")
@@ -1352,7 +1370,7 @@ def main():
 
     # Ensure `rich` is available before doing UI stuff (this may install rich temporarily)
     ensure_rich(args.no_deps)
-    
+
     try:
         from rich.console import Console as _RichConsole
         from rich.table import Table as _RichTable
@@ -1377,6 +1395,7 @@ def main():
         installer.execute()
     finally:
         installer.cleanup()
+
 
 if __name__ == "__main__":
     main()
