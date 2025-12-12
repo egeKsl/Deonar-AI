@@ -65,6 +65,17 @@ class Installer:
         self.heartbeat = max(2, getattr(self.args, "heartbeat", 4))
 
     # --------------------- system detection ---------------------
+    def validate_python_version(self):
+        major, minor = sys.version_info[:2]
+        if (major, minor) < (3, 8):
+            log(
+                "error",
+                f"Unsupported Python {major}.{minor}. Python >= 3.8 is required.",
+            )
+            sys.exit(1)
+        else:
+            log("ok", f"Python version {major}.{minor} is supported.")
+
     def detect_system(self) -> dict:
         cur_py = (sys.version_info.major, sys.version_info.minor)
         log("info", f"Current Python: {cur_py[0]}.{cur_py[1]}")
@@ -825,6 +836,7 @@ class Installer:
     def execute(self):
         env = self.detect_system()
         ensure_rich(getattr(self.args, "no_deps", False))
+        self.validate_python_version()
         try:
             # rebind rich objects if available
             importlib.invalidate_caches()

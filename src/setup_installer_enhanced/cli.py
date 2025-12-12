@@ -7,6 +7,7 @@ heavy installer logic. This module is safe to reference from pyproject scripts.
 from __future__ import annotations
 import argparse
 import os
+import subprocess
 import signal
 import sys
 
@@ -89,6 +90,16 @@ def parse_args() -> argparse.Namespace:
         dest="always_progress",
         help="Force pip --progress-bar=on and -v when possible",
     )
+    ap.add_argument(
+        "--run-after",
+        nargs=argparse.REMAINDER,
+        help=(
+            "(optional) command to run after successful install. "
+            "Provide command and args after this flag. Example: "
+            "--run-after python main.py --flag value"
+        ),
+    )
+
     return ap.parse_args()
 
 
@@ -125,7 +136,49 @@ def main():
     try:
         installer.execute()
     finally:
+        # installer.cleanup()
+        # we will cleanup later depending on success/failure,
+        # so we don't call cleanup() unconditionally here.
+        pass
+
+    # If there are failures recorded, don't run post-install commands.
+    install_failed = bool(installer.summary.get("failed"))
+
+    if install_failed:
+        failed_pkgs = ", ".join(installer.summary.get("failed", [])) or "<unknown>"
+        log(
+            "error",
+            f"Installer reported package failures ({failed_pkgs}); skipping post-install command.",
+        )
         installer.cleanup()
+        return 1
+
+    # If user supplied a command to run after successful install, run it now.
+    if args.run_after:
+        cmd = args.run_after  # list of tokens
+        log("info", f"Running post-install command: {' '.join(cmd)}")
+        try:
+            # run the requested command (streams to console)
+            proc = subprocess.run(cmd)
+            rc = proc.returncode
+            if rc == 0:
+                log("ok", f"Post-install command finished successfully (exit {rc}).")
+            else:
+                log("error", f"Post-install command failed (exit {rc}).")
+            installer.cleanup()
+            return rc
+        except FileNotFoundError as e:
+            log("error", f"Failed to execute post-install command: {e}")
+            installer.cleanup()
+            return 127
+        except Exception as e:
+            log("error", f"Unexpected error when running post-install command: {e}")
+            installer.cleanup()
+            return 1
+
+    # No post-run requested — normal cleanup & success exit.
+    installer.cleanup()
+    return 0
 
 
 if __name__ == "__main__":
