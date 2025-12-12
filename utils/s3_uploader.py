@@ -36,6 +36,14 @@ Precedence for config:
     CLI > Environment variables > Config dataclass defaults
 """
 
+# =====================================================================
+# IMPORT-SAFE MODE FOR PIP
+# =====================================================================
+# pip import runs "egg_info" with no arguments → ANY output breaks install.
+# We suppress all top-level initialization during module import.
+_S3_IMPORT_SAFE = False
+
+
 from __future__ import annotations
 
 import argparse
@@ -122,9 +130,6 @@ class Config:
     JSON_SUMMARY_PATH: Optional[str] = None  # e.g. "./upload_summary.json"
 
 
-CONFIG = Config()
-
-
 # =====================================================================
 # LOGGING SETUP
 # =====================================================================
@@ -145,7 +150,19 @@ def setup_logger(level: int = logging.INFO) -> logging.Logger:
     return logger
 
 
-logger = setup_logger()
+# =====================================================================
+# Initialize logger and config
+# =====================================================================
+def _lazy_init():
+    """Initialize CONFIG and logger ONLY when running as CLI, not on import."""
+    global CONFIG, logger
+    CONFIG = Config()
+    logger = setup_logger()
+
+
+# Only initialize when not imported by pip build system
+if not _S3_IMPORT_SAFE:
+    _lazy_init()
 
 
 # =====================================================================

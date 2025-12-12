@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "setup-installer-enhanced"
+version = "0.1.0"
+description = "Enhanced pip installer for my AI project"
+readme = "README.md"
+requires-python = ">=3.8"
+
+dependencies = [
+  "rich>=13.6.0"
+]
+
+[project.scripts]
+setup-installer = "setup_installer_enhanced.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

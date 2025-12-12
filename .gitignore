@@ -11,3 +11,10 @@ __pycache__/
 *.log
 logs/
 outputs/
+# Python packaging artifacts
+*.egg-info/
+src/*.egg-info/
+*.dist-info/
+build/
+dist/
+pip-wheel-metadata/
