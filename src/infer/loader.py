@@ -82,6 +82,28 @@ def _normalize_device_arg(device_arg: Optional[str]) -> Optional[str]:
     return s
 
 
+def _patch_posixpath_for_windows():
+    """
+    Patch pathlib.PosixPath so Linux-trained torch checkpoints
+    can be safely loaded on Windows.
+    """
+    import os
+
+    if os.name != "nt":
+        return  # only needed on Windows
+
+    import pathlib
+
+    if hasattr(pathlib, "_patched_posixpath"):
+        return  # already patched
+
+    class _WindowsPosixPath(pathlib.WindowsPath):
+        pass
+
+    pathlib.PosixPath = _WindowsPosixPath  # type: ignore
+    pathlib._patched_posixpath = True
+
+
 # ---------------------------
 # Model loading - threaded-friendly loader (ultralytics preferred)
 # ---------------------------
@@ -120,11 +142,19 @@ def load_model_threaded(
         try:
             from ultralytics import YOLO  # lazy import
 
+            # ---- OS-safe PosixPath patch (CRITICAL) ----
+            _patch_posixpath_for_windows()
+
+            # ---- Normalize weights path (string-level hygiene) ----
+            from pathlib import Path
+
+            weights = str(Path(path).expanduser().resolve())
+
             log.info(
                 "MODEL-LOADER",
-                f"Loading Ultralytics YOLO weights: {path} -> device={effective_device}",
+                f"Loading Ultralytics YOLO weights: {weights} -> device={effective_device}",
             )
-            model = YOLO(path)
+            model = YOLO(weights)
 
             # attempt to move to device (ultralytics wrapper supports .to in many versions)
             # 1) Move model to device if supported
@@ -240,7 +270,11 @@ def load_model_threaded(
 # Original (single-thread) loader kept for compatibility
 # ---------------------------
 def load_model(
-    weights: str, device_arg: Optional[str], half: bool, fuse: bool, quiet: bool = False
+    weights: str,
+    device_arg: Optional[str],
+    half: bool,
+    fuse: bool,
+    quiet: bool = False,
 ) -> Tuple[Any, str]:
     """
     Classic loader used by the single-threaded path.
@@ -249,6 +283,14 @@ def load_model(
     Preserves original behaviour: uses Ultralytics YOLO API directly and attempts
     to move/fuse/half the underlying model where supported.
     """
+    # ---- OS-safe PosixPath patch (CRITICAL) ----
+    _patch_posixpath_for_windows()
+
+    # ---- Normalize weights path (string-level hygiene) ----
+    from pathlib import Path
+
+    weights = str(Path(weights).expanduser().resolve())
+
     if not quiet:
         log.info(
             "INFER-RUNTIME", f" Device request: {_pretty_device_request(device_arg)}"

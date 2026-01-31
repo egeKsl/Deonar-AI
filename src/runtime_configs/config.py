@@ -17,8 +17,6 @@ Behavior:
 
 from __future__ import annotations
 
-import os
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Optional, Tuple, Union
@@ -403,29 +401,6 @@ def load_config(
     # src_root -> <repo>/src
     src_root = this_file.parents[1]
 
-    # Helper: try project-root first, then fallback to src/
-    def _resolve_path_prefer_project(value: str) -> Path:
-        """
-        Turn a string path into an absolute Path:
-            - If already absolute, return it.
-            - If relative, look under project_root first, then src_root.
-            - If not found, return project_root / value (so caller gets a deterministic path).
-        """
-        p = Path(value)
-        if p.is_absolute():
-            return p
-        # candidate locations (project root preferred)
-        cand1 = base_dir / value
-        cand2 = src_root / value
-        # If value looks like a bare filename (no subdir), prefer base_dir/<subdir>/<name> is handled elsewhere.
-        # Here we just check the direct candidate paths.
-        if cand1.exists():
-            return cand1.resolve()
-        if cand2.exists():
-            return cand2.resolve()
-        # not found: return project-root relative path (so errors reference an expected location)
-        return cand1.resolve()
-
     # Compose final absolute paths for YAML/.env lookup
     # Accept incoming yaml_path/env_path as either:
     #  - "configs/config.yaml" (relative to project root)
@@ -513,7 +488,7 @@ def load_config(
     cfg["webrtc"] = raw.get("webrtc", {})
     # output_video
     cfg["output_video"] = raw.get("output_video", {})
-    
+
     # legacy_env if fallback used
     if not used_yaml:
         cfg["legacy_env"] = raw.get("legacy_env", {})
@@ -1096,76 +1071,54 @@ def load_config(
         else cfg.get("legacy_env", {}).get("COUNT_CLASSES", "*")
     )
     classes = _as_str(classes_raw, default="*", allow_blank=True)
-    
+
     # webrtc config
     webrtc = cfg.get("webrtc", {})
     webrtc_enable = _as_bool(
-        (
-            webrtc.get("enable")
-        ),
+        (webrtc.get("enable")),
         False,
     )
     webrtc_host = _as_str(
-        (
-            webrtc.get("host")
-        ),
+        (webrtc.get("host")),
         default="0.0.0.0",
     )
     webrtc_port = _as_int(
-        (
-            webrtc.get("port")
-        ),
+        (webrtc.get("port")),
         default=8080,
     )
     webrtc_fps = _as_int(
-        (
-            webrtc.get("fps")
-        ),
+        (webrtc.get("fps")),
         default=25,
     )
     webrtc_max_clients = _as_int(
-        (
-            webrtc.get("max_clients")
-        ),
-        default=2, 
+        (webrtc.get("max_clients")),
+        default=2,
     )
     webrtc_downscale_width = _as_int(
-        (
-            webrtc.get("downscale_width")
-        ),
+        (webrtc.get("downscale_width")),
         default=960,
     )
     webrtc_downscale_height = _as_int(
-        (
-            webrtc.get("downscale_height")
-        ),
+        (webrtc.get("downscale_height")),
         default=540,
     )
-    
+
     # output video config
     output_video = cfg.get("output_video", {})
     record_video = _as_bool(
-        (
-            output_video.get("enable")
-        ),
+        (output_video.get("enable")),
         False,
     )
     video_path = _as_str(
-        (
-            output_video.get("filename")
-        ),
+        (output_video.get("filename")),
         default="output_video.mp4",
     )
     video_fps = _as_int(
-        (
-            output_video.get("fps")
-        ),
+        (output_video.get("fps")),
         default=30,
     )
     video_fourcc = _as_str(
-        (
-            output_video.get("fourcc")
-        ),
+        (output_video.get("fourcc")),
         default="mp4v",
     )
     video_path = (
@@ -1173,10 +1126,10 @@ def load_config(
         if video_path
         else None
     )
-
-    # convert some BGRs to CSV/legacy string forms so old code expecting "0,255,0" keeps working
-    count_box_color_str = f"{counted_bgr[0]},{counted_bgr[1]},{counted_bgr[2]}"
-    box_color_str = f"{base_bgr[0]},{base_bgr[1]},{base_bgr[2]}"
+    overwrite_video = _as_bool(
+        (output_video.get("overwrite")),
+        default=False,
+    )
 
     # Compose final CONFIG dict (structured)
     CONFIG: Dict[str, Any] = {
@@ -1283,12 +1236,9 @@ def load_config(
             "filename": video_path,
             "fps": video_fps,
             "fourcc": video_fourcc,
+            "overwrite": overwrite_video,
         },
     }
-
-    # Build backward-compatible ARGS namespace with the same names used previously by pipeline
-    count_box_color_str = f"{counted_bgr[0]},{counted_bgr[1]},{counted_bgr[2]}"
-    box_color_str = f"{base_bgr[0]},{base_bgr[1]},{base_bgr[2]}"
 
     # Flatten tracking bytetrack overrides (may be None)
     bt = (
@@ -1400,6 +1350,7 @@ def load_config(
         video_path=CONFIG["output_video"]["filename"],
         video_fps=CONFIG["output_video"]["fps"],
         video_fourcc=CONFIG["output_video"]["fourcc"],
+        overwrite_video=CONFIG["output_video"]["overwrite"],
     )
     # Ensure logs directory exists
     try:

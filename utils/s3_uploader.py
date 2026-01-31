@@ -35,6 +35,7 @@ Usage examples:
 Precedence for config:
     CLI > Environment variables > Config dataclass defaults
 """
+from __future__ import annotations
 
 # =====================================================================
 # IMPORT-SAFE MODE FOR PIP
@@ -42,9 +43,6 @@ Precedence for config:
 # pip import runs "egg_info" with no arguments → ANY output breaks install.
 # We suppress all top-level initialization during module import.
 _S3_IMPORT_SAFE = False
-
-
-from __future__ import annotations
 
 import argparse
 import fnmatch

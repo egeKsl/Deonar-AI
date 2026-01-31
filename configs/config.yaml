@@ -17,10 +17,10 @@ version: 1
 geometry:
   # Relative ROI rectangle (normalized coords, 0..1)
   roi:
-    xr: 0.2438     # left  (fraction of full-frame width)
-    yr: 0.0000     # top   (fraction of full-frame height)
-    wr: 0.5489     # width (fraction of full-frame width)
-    hr: 1.0000     # height(fraction of full-frame height)
+    xr: 0.0000     # left  (fraction of full-frame width)
+    yr: 0.1514     # top   (fraction of full-frame height)
+    wr: 1.0000     # width (fraction of full-frame width)
+    hr: 0.8472     # height(fraction of full-frame height
 
   # NOTE: counting.line_roi and counting.zone.rect are ROI-relative coordinates
   # (i.e., they operate inside the ROI coordinate space). Example:
@@ -67,8 +67,8 @@ paths:
   # If relative:
   #   - weights resolves under models/
   #   - source  resolves under data/  (unless it looks like rtsp/http)
-  weights: best_latest.pt
-  source: rtsp://127.0.0.1:8554/mystream
+  weights: goat_yolo12n_img1024_bs12_lr0.0075_sgd_best.pt
+  source: cam1_D01_1h08m50s_1h13m10s.mp4
 
 # ------------------------------
 # Inference (YOLO / Ultralytics)
@@ -103,7 +103,7 @@ counting:
 
   # ---- line counting ----
   # ROI-relative line(s) in ratios [0..1]: "ax,ay,bx,by" ; multiple lines separated by ';'
-  line_roi: "0.2627,0.311,0.6923,0.311"
+  line_roi: "0.1875, 0.1754, 0.1875, 0.8984"
 
   # ---- zone counting ----
   zone:
@@ -179,7 +179,7 @@ csv:
 # ------------------------------
 logging:
   dir: logs
-  file: logs/log.jsonl
+  file: log.jsonl
   max_bytes: 5242880
   backup_count: 3
   queue_max: 8192        # for queue-based logger impls (if used)
@@ -206,3 +206,4 @@ output_video:
   filename: output.mp4
   fourcc: "mp4v"
   fps: 25
+  overwrite: false

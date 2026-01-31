@@ -175,11 +175,13 @@ class DisplayWorker(threading.Thread):
                 "outputs/videos/goats_output.mp4",
             )
             fourcc = getattr(self.args, "video_fourcc", "mp4v")
+            overwrite = bool(getattr(self.args, "overwrite_video", False))
 
             self.video_recorder = VideoRecorder(
                 path=video_path,
                 fps=fps,
                 fourcc=fourcc,
+                overwrite=overwrite,
             )
             log.info(
                 "DISPLAY-WORKER",
@@ -662,7 +664,7 @@ class DisplayWorker(threading.Thread):
             log.debug("DISPLAY-WORKER", "cv2.destroyAllWindows failed")
             pass
         log.info("DISPLAY-WORKER", "DisplayWorker exiting")
-        
+
         try:
             if self.video_recorder is not None:
                 stats = self.video_recorder.get_stats()

@@ -29,6 +29,7 @@ class VideoRecorder:
         fps: float,
         fourcc: str = "mp4v",
         strict_size: bool = True,
+        overwrite: bool = False,
     ) -> None:
         """
         :param path: Output video path (will create parent dirs).
@@ -42,6 +43,7 @@ class VideoRecorder:
         self.fps = float(fps)
         self.fourcc_str = fourcc or "mp4v"
         self.strict_size = bool(strict_size)
+        self.overwrite = bool(overwrite)
 
         self._writer: Optional[cv2.VideoWriter] = None
         self._size: Optional[Tuple[int, int]] = None  # (w, h)
@@ -54,6 +56,25 @@ class VideoRecorder:
         self._write_times_ms: List[float] = []  # per-frame write duration
         self._last_error: Optional[str] = None
 
+    def _resolve_output_path(self, path: str) -> str:
+        """
+        Resolve output path based on overwrite policy.
+
+        If overwrite is False and path exists, append _### version suffix.
+        Example: video.mp4 -> video_001.mp4
+        """
+        if self.overwrite or not os.path.exists(path):
+            return path
+
+        base, ext = os.path.splitext(path)
+        idx = 1
+
+        while True:
+            candidate = f"{base}_{idx:03d}{ext}"
+            if not os.path.exists(candidate):
+                return candidate
+            idx += 1
+
     # ------------------------------------------------------------------ #
     # Core open / write / close
     # ------------------------------------------------------------------ #
@@ -65,6 +86,12 @@ class VideoRecorder:
             return
 
         try:
+            # Resolve final output path (overwrite / versioning)
+            final_path = self._resolve_output_path(self.path)
+            self.path = final_path
+            log.info("VIDEO", f"Opening video writer: {self.path}")
+
+            # Ensure parent directory exists
             parent = os.path.dirname(self.path) or "."
             os.makedirs(parent, exist_ok=True)
         except Exception as e:

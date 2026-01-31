@@ -515,7 +515,7 @@ class InferenceWorker(threading.Thread):
                         1  # Frame successfully processed and sent to result_queue
                     )
                     if hasattr(self, "metrics") and self.metrics is not None:
-                        self.metrics.mark(int(frame_id or -1), "infer_end", ts=time.perf_counter(), extra={"infer_wall_s": t1-t0})
+                        self.metrics.mark(int(frame_id or -1), "infer_end", ts=time.perf_counter(), extra={"infer_wall_s": infer_time})
                 else:
                     if hasattr(self, "metrics") and self.metrics is not None:
                         self.metrics.incr("infer_result_dropped")

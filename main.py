@@ -1,6 +1,7 @@
 # main file to start the application entry point
 
 import sys, os
+import traceback
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -27,6 +28,7 @@ if __name__ == "__main__":
     except FileNotFoundError:
         log.error("MAIN-ERROR", "Configuration file 'configs/config.yaml' not found.")
         sys.exit(1)
-    except Exception as e:
-        log.error("MAIN-ERROR", f"Error loading configuration: {e}")
+    except Exception:
+        log.error("MAIN-ERROR", "Unhandled exception occurred. Full traceback below:")
+        traceback.print_exc()
         sys.exit(1)
