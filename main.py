@@ -26,7 +26,8 @@ if __name__ == "__main__":
         )
         sys.exit(0)  # exit gracefully
     except FileNotFoundError:
-        log.error("MAIN-ERROR", "Configuration file 'configs/config.yaml' not found.")
+        log.error("MAIN-ERROR", "Configuration file 'configs/config.yaml' not found. Full traceback below:")
+        traceback.print_exc()
         sys.exit(1)
     except Exception:
         log.error("MAIN-ERROR", "Unhandled exception occurred. Full traceback below:")

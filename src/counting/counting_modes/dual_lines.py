@@ -75,6 +75,136 @@ def _confirm_side(
     return None
 
 
+class MotionHistory:
+    """
+    Phase-1 motion recorder.
+    Stores recent centroid positions per track_id.
+    No decisions, no counting, no direction inference.
+    """
+
+    def __init__(self, max_frames: int = 60):
+        self.max_frames = max_frames
+        # tid -> deque[(frame_idx, cx, cy)]
+        self.history = defaultdict(lambda: deque(maxlen=self.max_frames))
+
+    def update(self, tid: int, frame_idx: int, cx: float, cy: float):
+        self.history[tid].append((frame_idx, cx, cy))
+
+    def get(self, tid: int):
+        """Return list of (frame_idx, cx, cy) for this tid."""
+        return list(self.history.get(tid, []))
+
+    def clear_tid(self, tid: int):
+        self.history.pop(tid, None)
+
+    def clear_all(self):
+        self.history.clear()
+
+
+class MotionIntentAnalyzer:
+    """
+    Phase-2 brain.
+    Reads motion history + geometry event and decides
+    whether motion supports the geometry decision.
+
+    This class is READ-ONLY: no counters, no side effects.
+    """
+
+    def __init__(
+        self,
+        min_frames: int = 6,
+        min_displacement_px: float = 12.0,
+        max_lookback_frames: int = 30,
+    ):
+        self.min_frames = min_frames
+        self.min_disp = min_displacement_px
+        self.max_lookback = max_lookback_frames
+
+    def analyze(
+        self,
+        motion_history,
+        tid: int,
+        event_frame: int,
+        geometry_direction: str,
+        line_vector: tuple,  # (dx_line, dy_line)
+    ) -> dict:
+        """
+        Returns a decision dict:
+        accept | reject | defer
+        """
+
+        hist = motion_history.get(tid)
+        if not hist:
+            return self._defer("no motion history")
+
+        # only frames before geometry event
+        past = [(f, x, y) for (f, x, y) in hist if f <= event_frame]
+
+        if len(past) < self.min_frames:
+            return self._defer("insufficient motion frames")
+
+        # keep recent window
+        past = past[-self.max_lookback :]
+
+        f0, x0, y0 = past[0]
+        f1, x1, y1 = past[-1]
+
+        dx = x1 - x0
+        dy = y1 - y0
+
+        disp = (dx * dx + dy * dy) ** 0.5
+        if disp < self.min_disp:
+            return self._reject(dx, dy, "motion too small")
+
+        # dominant axis
+        dominant_axis = "x" if abs(dx) > abs(dy) else "y"
+
+        # project motion onto line normal
+        lx, ly = line_vector
+        ln = (lx * lx + ly * ly) ** 0.5 or 1.0
+        nx, ny = -ly / ln, lx / ln
+
+        projection = dx * nx + dy * ny
+
+        motion_dir = "up" if projection > 0 else "down"
+
+        if motion_dir != geometry_direction:
+            return self._reject(
+                dx,
+                dy,
+                f"motion contradicts geometry ({motion_dir})",
+                dominant_axis,
+            )
+
+        confidence = min(1.0, disp / (self.min_disp * 3))
+
+        return {
+            "decision": "accept",
+            "confidence": confidence,
+            "dominant_axis": dominant_axis,
+            "delta": (dx, dy),
+            "reason": "motion supports geometry",
+        }
+
+    def _reject(self, dx, dy, reason, axis=None):
+        return {
+            "decision": "reject",
+            "confidence": 0.0,
+            "dominant_axis": axis,
+            "delta": (dx, dy),
+            "reason": reason,
+        }
+
+    def _defer(self, reason):
+        return {
+            "decision": "defer",
+            "confidence": 0.0,
+            "dominant_axis": None,
+            "delta": (0.0, 0.0),
+            "reason": reason,
+        }
+
+
 class DualLineCounter:
     """
     Two-line counter object.
@@ -119,6 +249,14 @@ class DualLineCounter:
 
         # last frame when tid was counted (for lock)
         self.last_counted: Dict[int, int] = defaultdict(lambda: -(10**9))
+
+        # ---- Phase 1: motion history (eyes) ----
+        self.motion = MotionHistory(max_frames=60)
+
+        self.motion_analyzer = MotionIntentAnalyzer()
+
+        # ---- Phase 1.5: geometry evidence buffer ----
+        self.geometry_events = []  # List[dict]
 
     def _dbg(self, msg: str) -> None:
         if self.debug_enabled:
@@ -247,18 +385,19 @@ class DualLineCounter:
                 )
 
                 if same_dir and within_win and unlocked:
-                    self.last_counted[tid] = frame_idx
-                    # consume pending and return event
-                    try:
-                        del self.pending_A[tid]
-                    except KeyError:
-                        pass
-                    return {
+                    event = {
+                        "tid": tid,
+                        "frame_idx": frame_idx,
+                        "direction": flipB,
                         "type": "count",
                         "subsystem": "dual_verify",
-                        "direction": flipB,
-                        "tid": tid,
+                        "mode": "verify",
+                        "line_sequence": ["A", "B"],
+                        "trigger_line": "B",
+                        "reason": "A then B crossed within window",
                     }
+                    self.geometry_events.append(event)
+                    return event
                 else:
                     # drop pending and log reason
                     reason = []
@@ -268,10 +407,6 @@ class DualLineCounter:
                         reason.append("window_expired")
                     if not unlocked:
                         reason.append("locked")
-                    try:
-                        del self.pending_A[tid]
-                    except KeyError:
-                        pass
                     self._dbg(
                         f"tid={tid} drop pending A -> {','.join(reason) or 'unknown'}"
                     )
@@ -307,7 +442,6 @@ class DualLineCounter:
             flipA = self._direction_flip(prevA, cA)
             if flipA is not None:
                 if (frame_idx - self.last_counted[tid]) >= self.lock_frames:
-                    self.last_counted[tid] = frame_idx
                     # call callback to let the pipeline increment counters in real-time
                     try:
                         on_A_count_cb(tid, flipA)
@@ -318,12 +452,20 @@ class DualLineCounter:
                             f"on_A_count_cb failed for tid={tid}",
                             exc_info=True,
                         )
-                    return {
+
+                    event = {
+                        "tid": tid,
+                        "frame_idx": frame_idx,
+                        "direction": flipA,
+                        "mode": "recover",
+                        "line_sequence": ["A"],
+                        "trigger_line": "A",
+                        "reason": "Immediate A crossing",
                         "type": "count",
                         "subsystem": "dual_recover_A",
-                        "direction": flipA,
-                        "tid": tid,
                     }
+                    self.geometry_events.append(event)
+                    return event
 
         # B side recovery (one-shot if lock has elapsed)
         sB = self._side_sign(cx, cy, self.B, margin_px)
@@ -336,13 +478,20 @@ class DualLineCounter:
             flipB = self._direction_flip(prevB, cB)
             if flipB is not None:
                 if (frame_idx - self.last_counted[tid]) >= self.lock_frames:
-                    self.last_counted[tid] = frame_idx
-                    return {
+
+                    event = {
+                        "tid": tid,
+                        "frame_idx": frame_idx,
+                        "direction": flipB,
+                        "mode": "recover",
+                        "line_sequence": ["B"],
+                        "trigger_line": "B",
+                        "reason": "Recovered at B (A missed)",
                         "type": "count",
                         "subsystem": "dual_recover_B",
-                        "direction": flipB,
-                        "tid": tid,
                     }
+                    self.geometry_events.append(event)
+                    return event
 
         return None
 

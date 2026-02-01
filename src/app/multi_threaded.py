@@ -133,9 +133,15 @@ def _prepare_injected_context(args, cap_info):
             log.debug("RUNNER", traceback.format_exc())
 
         try:
+            decisions_path = (
+                args.csv_decisions
+                if hasattr(args, "dual_lines_enabled", False)
+                else None
+            )
             injected_csvs = CsvWriters(
                 events_path=args.csv_events,
                 ts_path=args.csv_timeseries,
+                decisions_path=decisions_path,  # decisions CSV not injected here
             )
             injected["csvs"] = injected_csvs
             log.debug("RUNNER", "Prepared CsvWriters for DisplayWorker (injected).")
@@ -604,7 +610,6 @@ def _cleanup(
         except Exception:
             log.debug("RUNNER", "Failed to close WebRTCServer", exc_info=True)
 
-
     log.info("RUNNER", "Threaded runner stopped")
 
 
@@ -646,7 +651,9 @@ def run_threaded(args):
     src_final = _normalize_source(args)
     log.info("RUNNER", f"Starting threaded pipeline with source={src_final}")
 
-    metrics = MetricsCollector(csv_path=getattr(args, "csv_metrics", "outputs/metrics/metrics.csv"))
+    metrics = MetricsCollector(
+        csv_path=getattr(args, "csv_metrics", "outputs/metrics/metrics.csv")
+    )
     capture = _create_capture_thread(
         src_final, capture_queue, stop_event, args, cap_backend, metrics=metrics
     )
@@ -688,7 +695,6 @@ def run_threaded(args):
             log.info("RUNNER", f"WebRTCServer started on {rtc_host}:{rtc_port}")
     except Exception:
         log.error("RUNNER", "Failed to start WebRTCServer: " + traceback.format_exc())
-
 
     runtime_cfg = _build_runtime_cfg(args)
     pacer = _create_and_start_pacer(

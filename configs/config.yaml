@@ -30,7 +30,7 @@ geometry:
 # Runtime & I/O orchestration
 # ------------------------------
 runtime:
-  live: false
+  live: false                          # enable live processing (UI / WebRTC / output)
   quiet: false
   verbose: false
 
@@ -68,7 +68,7 @@ paths:
   #   - weights resolves under models/
   #   - source  resolves under data/  (unless it looks like rtsp/http)
   weights: goat_yolo12n_img1024_bs12_lr0.0075_sgd_best.pt
-  source: cam1_D01_1h08m50s_1h13m10s.mp4
+  source: cam1_D01_18m15s_20m25s.mp4
 
 # ------------------------------
 # Inference (YOLO / Ultralytics)
@@ -172,6 +172,7 @@ debug:
 csv:
   events: goat_cross_events.csv
   timeseries: goat_counts_timeseries.csv
+  decisions: goat_decisions.csv
   metrics: goat_metrics.csv
 
 # ------------------------------

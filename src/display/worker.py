@@ -232,7 +232,12 @@ class DisplayWorker(threading.Thread):
             try:
                 events_path = self.args.csv_events
                 ts_path = self.args.csv_timeseries
-                self.csvs = CsvWriters(events_path, ts_path)
+                decisions_path = (
+                    self.args.csv_decisions
+                    if hasattr(self.args, "dual_lines_enabled", False)
+                    else None
+                )
+                self.csvs = CsvWriters(events_path, ts_path, decisions_path)
                 self._owns_csvs = True
                 log.debug("DISPLAY-WORKER", "Created CSV writers")
             except Exception:

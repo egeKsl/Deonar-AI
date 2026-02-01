@@ -135,10 +135,12 @@ def setup_output(args, W, H, fps):
 
 
 class CsvWriters:
-    def __init__(self, events_path=None, ts_path=None):
+    def __init__(self, events_path=None, ts_path=None, decisions_path=None):
         self.ev_writer = self.ts_writer = None
         self.ev_fh = self.ts_fh = None
         self.ev_seen_ids = set()
+        self.dec_writer = None
+        self.dec_fh = None
 
         # Event CSV
         if events_path:
@@ -170,6 +172,33 @@ class CsvWriters:
                 self.ts_writer.writerow(["timestamp_s", "up", "down", "total"])
             except Exception as e:
                 safe_print_error(f"Failed to open timeseries CSV: {ts_path}", e)
+                raise SystemExit(1)
+
+        # Decisions CSV (Phase 3)
+        if decisions_path:
+            try:
+                Path(decisions_path).parent.mkdir(parents=True, exist_ok=True)
+                self.dec_fh = open(decisions_path, "w", newline="", encoding="utf-8")
+                self.dec_writer = csv.writer(self.dec_fh)
+                self.dec_writer.writerow(
+                    [
+                        "timestamp_s",
+                        "proc_frame_idx",
+                        "track_id",
+                        "mode",
+                        "line",
+                        "geometry_direction",
+                        "decision",
+                        "reason",
+                        "confidence",
+                        "dx",
+                        "dy",
+                        "dominant_axis",
+                        "displacement_px",
+                    ]
+                )
+            except Exception as e:
+                safe_print_error(f"Failed to open decisions CSV: {decisions_path}", e)
                 raise SystemExit(1)
 
     def write_event(
@@ -205,8 +234,52 @@ class CsvWriters:
             safe_print_error("Failed to write timeseries row", e)
             raise SystemExit(1)
 
+    def write_decision(
+        self,
+        ts_s,
+        proc_frame_idx,
+        tid,
+        mode,
+        line,
+        geometry_direction,
+        decision,
+        reason,
+        confidence,
+        dx,
+        dy,
+        dominant_axis,
+    ):
+        try:
+            if self.dec_writer:
+                disp = (dx * dx + dy * dy) ** 0.5
+                self.dec_writer.writerow(
+                    [
+                        f"{ts_s:.3f}",
+                        proc_frame_idx,
+                        tid,
+                        mode,
+                        line,
+                        geometry_direction,
+                        decision,
+                        reason,
+                        f"{confidence:.3f}",
+                        f"{dx:.1f}",
+                        f"{dy:.1f}",
+                        dominant_axis or "",
+                        f"{disp:.1f}",
+                    ]
+                )
+                self.dec_fh.flush()  # 🔥 CRITICAL for 24/7 safety
+        except Exception as e:
+            safe_print_error("Failed to write decision row", e)
+            raise SystemExit(1)
+
     def close(self):
-        for fh, label in [(self.ev_fh, "events CSV"), (self.ts_fh, "timeseries CSV")]:
+        for fh, label in [
+            (self.ev_fh, "events CSV"),
+            (self.ts_fh, "timeseries CSV"),
+            (self.dec_fh, "decisions CSV"),
+        ]:
             if fh:
                 try:
                     fh.close()

@@ -943,6 +943,15 @@ def load_config(
         default="goat_counts_timeseries.csv",
         allow_blank=True,
     )
+    csv_decisions = _as_str(
+        (
+            csvs.get("decisions")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("CSV_DECISIONS")
+        ),
+        default="goat_decisions.csv",
+        allow_blank=True,
+    )
     csv_metrics = _as_str(
         (
             csvs.get("metrics")
@@ -960,6 +969,11 @@ def load_config(
     csv_timeseries = (
         _resolve_path(csv_timeseries, str(base_dir / "outputs" / "timeseries"))
         if csv_timeseries
+        else None
+    )
+    csv_decisions = (
+        _resolve_path(csv_decisions, str(base_dir / "outputs" / "decisions"))
+        if csv_decisions
         else None
     )
     csv_metrics = (
@@ -1211,6 +1225,7 @@ def load_config(
         "csv": {
             "events": csv_events,
             "timeseries": csv_timeseries,
+            "decisions": csv_decisions,
             "metrics": csv_metrics,
         },
         "logging": {
@@ -1317,6 +1332,7 @@ def load_config(
         # CSV outputs (flat)
         csv_events=CONFIG["csv"]["events"],
         csv_timeseries=CONFIG["csv"]["timeseries"],
+        csv_decisions=CONFIG["csv"]["decisions"],
         csv_metrics=CONFIG["csv"]["metrics"],
         # ByteTrack flat overrides (legacy API)
         bt_profile=bt.get("profile", None),

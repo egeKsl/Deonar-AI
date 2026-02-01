@@ -143,9 +143,87 @@ def _update_counts_dual_for_frame(
         cx, cy = dual._centroid_from(box, mask)
         tid_i = int(tid)
 
+        # -------------------------------
+        # PHASE 1: record motion (eyes)
+        # -------------------------------
+        dual.motion.update(
+            tid=tid_i,
+            frame_idx=feeder.out_index,
+            cx=cx,
+            cy=cy,
+        )
+
         if mode == "verify":
             ev = dual.update_verify(tid_i, cx, cy, feeder.out_index, margin_px=margin)
             if ev and ev.get("type") == "count":
+                geom_event = ev
+                # -------------------------------
+                # PHASE 2: motion gating (brain)
+                # -------------------------------
+                decision = dual.motion_analyzer.analyze(
+                    motion_history=dual.motion,
+                    tid=geom_event["tid"],
+                    event_frame=geom_event["frame_idx"],
+                    geometry_direction=geom_event["direction"],
+                    line_vector=(
+                        (
+                            lineB_roi[2] - lineB_roi[0],
+                            lineB_roi[3] - lineB_roi[1],
+                        )
+                        if geom_event["trigger_line"] == "B"
+                        else (
+                            lineA_roi[2] - lineA_roi[0],
+                            lineA_roi[3] - lineA_roi[1],
+                        )
+                    ),
+                )
+
+                ts_s = feeder.frame_in / max(1.0, fps)
+
+                csvs.write_decision(
+                    ts_s=ts_s,
+                    proc_frame_idx=feeder.out_index,
+                    tid=geom_event["tid"],
+                    mode=geom_event["mode"],
+                    line=geom_event["trigger_line"],
+                    geometry_direction=geom_event["direction"],
+                    decision=decision["decision"],
+                    reason=decision["reason"],
+                    confidence=decision.get("confidence", 0.0),
+                    dx=decision["delta"][0],
+                    dy=decision["delta"][1],
+                    dominant_axis=decision.get("dominant_axis"),
+                )
+
+                if decision["decision"] == "defer":
+                    if not args.quiet:
+                        log.debug(
+                            "DUAL-MOTION",
+                            f"tid={geom_event['tid']} deferred: {decision['reason']}",
+                        )
+                    continue
+
+                if decision["decision"] == "reject":
+                    if not args.quiet:
+                        log.warn(
+                            "DUAL-MOTION-REJECT",
+                            f"tid={geom_event['tid']} rejected: {decision['reason']} "
+                            f"Δ={decision['delta']} axis={decision['dominant_axis']}",
+                        )
+                    continue
+
+                # Only ACCEPT reaches here
+                # FINALIZE COMMIT (single authority)
+
+                # 1️⃣ Lock ID
+                dual.last_counted[tid_i] = feeder.out_index
+
+                # 2️⃣ Clear pending geometry (if any)
+                dual.pending_A.pop(tid_i, None)
+
+                # 3️⃣ Clear motion history
+                dual.motion.clear_tid(tid_i)
+
                 direction = ev.get("direction", "down")
                 ts_s = feeder.frame_in / max(1.0, fps)
 
@@ -189,47 +267,25 @@ def _update_counts_dual_for_frame(
                         )
 
         else:  # mode == "recover"
-            # A-count callback (commits immediately on A)
+
             def _on_A_count(tid_local, dir_local):
-                ts_s_local = feeder.frame_in / max(1.0, fps)
+                # DO NOT write CSV
+                # DO NOT update counters
+                # DO NOT animate
 
-                wrote = csvs.write_event(
-                    ts_s=ts_s_local,
-                    src_frame_idx=feeder.frame_in,
-                    proc_frame_idx=feeder.out_index,
-                    tid=int(tid_local),
-                    direction=dir_local,
-                    cx=cx,
-                    cy=cy,
-                )
-
-                if wrote:
-                    if dir_local == "up":
-                        state.up_count += 1
-                    else:
-                        state.down_count += 1
-                    if not args.quiet:
-                        log.success(
-                            "DUAL-A",
-                            f" t={ts_s_local:.2f}s id={tid_local} dir={dir_local} "
-                            f"Up={state.up_count} Down={state.down_count}",
-                        )
-
-                    colorer.mark_counted(int(tid_local), feeder.out_index)
-                    if (
-                        animator
-                        and (lineA_roi is not None)
-                        and (lineA_full is not None)
-                    ):
-                        animator.trigger(
-                            cx, cy, lineA_roi, lineA_full, dir_local, feeder.out_index
-                        )
-                else:
-                    if not args.quiet:
-                        log.warn(
-                            "CSV-DUPLICATE",
-                            f" duplicate track_id={tid_local} — skipped writing & count bump",
-                        )
+                # Geometry intent only
+                event = {
+                    "tid": tid_local,
+                    "frame_idx": feeder.out_index,
+                    "direction": dir_local,
+                    "mode": "recover",
+                    "line_sequence": ["A"],
+                    "trigger_line": "A",
+                    "reason": "Immediate A crossing",
+                    "type": "count",
+                    "subsystem": "dual_recover_A",
+                }
+                dual.geometry_events.append(event)
 
             ev = dual.update_recover(
                 tid_i,
@@ -240,7 +296,75 @@ def _update_counts_dual_for_frame(
                 on_A_count_cb=_on_A_count,
             )
             # If B recovered a miss (one-shot per ID lock inside DualLineCounter)
-            if ev and ev["type"] == "count" and ev["subsystem"] == "dual_recover_B":
+            if ev and ev["type"] == "count":
+                geom_event = ev
+                # -------------------------------
+                # PHASE 2: motion gating (brain)
+                # -------------------------------
+                decision = dual.motion_analyzer.analyze(
+                    motion_history=dual.motion,
+                    tid=geom_event["tid"],
+                    event_frame=geom_event["frame_idx"],
+                    geometry_direction=geom_event["direction"],
+                    line_vector=(
+                        (
+                            lineB_roi[2] - lineB_roi[0],
+                            lineB_roi[3] - lineB_roi[1],
+                        )
+                        if geom_event["trigger_line"] == "B"
+                        else (
+                            lineA_roi[2] - lineA_roi[0],
+                            lineA_roi[3] - lineA_roi[1],
+                        )
+                    ),
+                )
+
+                ts_s = feeder.frame_in / max(1.0, fps)
+
+                csvs.write_decision(
+                    ts_s=ts_s,
+                    proc_frame_idx=feeder.out_index,
+                    tid=geom_event["tid"],
+                    mode=geom_event["mode"],
+                    line=geom_event["trigger_line"],
+                    geometry_direction=geom_event["direction"],
+                    decision=decision["decision"],
+                    reason=decision["reason"],
+                    confidence=decision.get("confidence", 0.0),
+                    dx=decision["delta"][0],
+                    dy=decision["delta"][1],
+                    dominant_axis=decision.get("dominant_axis"),
+                )
+
+                if decision["decision"] == "defer":
+                    if not args.quiet:
+                        log.debug(
+                            "DUAL-MOTION",
+                            f"tid={geom_event['tid']} deferred: {decision['reason']}",
+                        )
+                    continue
+
+                if decision["decision"] == "reject":
+                    if not args.quiet:
+                        log.warn(
+                            "DUAL-MOTION-REJECT",
+                            f"tid={geom_event['tid']} rejected: {decision['reason']} "
+                            f"Δ={decision['delta']} axis={decision['dominant_axis']}",
+                        )
+                    continue
+
+                # Only ACCEPT reaches here
+                # FINALIZE COMMIT (single authority)
+
+                # 1️⃣ Lock ID
+                dual.last_counted[tid_i] = feeder.out_index
+
+                # 2️⃣ Clear pending geometry (if any)
+                dual.pending_A.pop(tid_i, None)
+
+                # 3️⃣ Clear motion history
+                dual.motion.clear_tid(tid_i)
+
                 dirB = ev["direction"]
                 ts_s = feeder.frame_in / max(1.0, fps)
                 wrote = csvs.write_event(

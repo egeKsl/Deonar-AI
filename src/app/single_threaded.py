@@ -87,7 +87,8 @@ def run_original(args):
     feeder = ROIStream(cap, rx, ry, rw, rh, stride=args.stride)
 
     # 7) CSV + video
-    csvs = CsvWriters(events_path=args.csv_events, ts_path=args.csv_timeseries)
+    decisions_path = args.csv_decisions if use_dual else None
+    csvs = CsvWriters(events_path=args.csv_events, ts_path=args.csv_timeseries, decisions_path=decisions_path)
     writer, show_windows, saving_enabled, out_path = setup_output(args, W, H, fps)
     _setup_windows(show_windows, args, rw, rh, W, H)
 
