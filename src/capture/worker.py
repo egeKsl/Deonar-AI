@@ -193,7 +193,7 @@ class ThreadedVideoCapture(threading.Thread):
                 frame = None
 
             if not ret or frame is None:
-                log.warning(
+                log.warn(
                     "CAPTURE-THREAD", f"read failed; reconnecting {self.source}"
                 )
                 try:

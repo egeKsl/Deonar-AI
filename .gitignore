@@ -1,6 +1,8 @@
 *.mp4
 *.json
 *.jsonl
+.env/
+.github/
 .venv/
 .vscode/
 __pycache__/

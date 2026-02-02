@@ -15,6 +15,8 @@ import json
 import threading
 import queue
 import time
+import sys
+import traceback
 from datetime import datetime
 from typing import Any, Dict
 
@@ -477,7 +479,13 @@ class Logger:
     def error(self, tag: str, message: str):
         self._log("error", tag, message, "❌")
 
-    def debug(self, tag: str, message: str):
+    def debug(self, tag: str, message: str, exc_info: bool = False):
+        if exc_info:
+            # Append traceback if an exception is active; otherwise add a note.
+            if sys.exc_info()[0] is not None:
+                message = f"{message}\n{traceback.format_exc()}"
+            else:
+                message = f"{message} (no active exception)"
         self._log("debug", tag, message, "🔍")
 
     def blank(self):

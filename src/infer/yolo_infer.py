@@ -57,11 +57,11 @@ def resolve_class_filter(model: Any, arg_str: Optional[str]):
         if found is not None:
             keep_ids.add(int(found))
         else:
-            log.warning(
+            log.warn(
                 "INFER-RUNTIME",
                 f" class name '{t}' not found in model names: {names_map}",
             )
-            log.warning(
+            log.warn(
                 "INFER-RUNTIME", f" Available names: {list(names_map.values())}"
             )
     return keep_ids

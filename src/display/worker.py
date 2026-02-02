@@ -127,9 +127,7 @@ class DisplayWorker(threading.Thread):
 
         # CSV writers (can be injected or constructed)
         self.csvs = self.injected.get("csvs")
-        self._owns_csvs = ("csvs" not in (injected or {})) and (self.csvs is None)
-        # Note: we'll set _owns_csvs True only if we create csvs later;
-        # alternatively initialize False then set True when we create them below.
+        # We only "own" CSVs if we create them ourselves later in _ensure_drawing.
         self._owns_csvs = False
 
         # cached geometry & lines
@@ -639,16 +637,6 @@ class DisplayWorker(threading.Thread):
                 except Exception:
                     pass
 
-                # close csvs if we own them
-                try:
-                    if self._owns_csvs and self.csvs is not None:
-                        try:
-                            self.csvs.close()
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-
                 # just before showing or immediately after (prefer after imshow+waitKey to measure when UI loop processed)
                 display_ts = time.monotonic()
                 # mark display_shown
@@ -669,6 +657,13 @@ class DisplayWorker(threading.Thread):
             log.debug("DISPLAY-WORKER", "cv2.destroyAllWindows failed")
             pass
         log.info("DISPLAY-WORKER", "DisplayWorker exiting")
+
+        # Close CSVs if this worker created them (only once, after loop exits)
+        try:
+            if self._owns_csvs and self.csvs is not None:
+                self.csvs.close()
+        except Exception:
+            pass
 
         try:
             if self.video_recorder is not None:

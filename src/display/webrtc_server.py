@@ -119,7 +119,7 @@ class WebRTCServer:
         self._thread.start()
 
         if not self._server_ready.wait(timeout=5.0):
-            log.warning(
+            log.warn(
                 "WEBRTC",
                 "WebRTCServer thread did not signal ready within 5s (server may still be starting).",
             )

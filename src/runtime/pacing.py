@@ -63,7 +63,7 @@ class PacingController:
 
     def start(self):
         if self._thread and self._thread.is_alive():
-            log.warning("PACE", "start() called but pacing thread already running")
+            log.warn("PACE", "start() called but pacing thread already running")
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True, name=self.name)
@@ -245,7 +245,7 @@ class PacingController:
                                     self._start_real_ts = time.monotonic()
                                     if frame_idx is not None:
                                         self._start_source_idx = int(frame_idx)
-                                    log.warning(
+                                    log.warn(
                                         "PACE-RESYNC",
                                         f"resynced to source_ts={source_ts} idx={frame_idx}",
                                     )
