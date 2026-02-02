@@ -68,7 +68,7 @@ paths:
   #   - weights resolves under models/
   #   - source  resolves under data/  (unless it looks like rtsp/http)
   weights: goat_yolo12n_img1024_bs12_lr0.0075_sgd_best.pt
-  source: cam1_D01_18m15s_20m25s.mp4
+  source: rtsp://127.0.0.1:8554/mystream
 
 # ------------------------------
 # Inference (YOLO / Ultralytics)

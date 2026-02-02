@@ -25,10 +25,12 @@ def safe_print_error(msg: str, exc: Exception | None = None):
         log.debug("SYSTEM", f" (details: {tb})")
 
 
-def infer_out_path(inp_path):
+def infer_out_path(inp_path, run_root=None):
     base, ext = os.path.splitext(os.path.basename(inp_path))
     # Create a subfolder under project root
     out_dir = Path("outputs") / "videos"
+    if run_root is not None:
+        out_dir = Path(run_root) / "video"
     out_dir.mkdir(parents=True, exist_ok=True)
     # Build the final output path
     out_file = f"{base}.annotated{ext or '.mp4'}"
@@ -101,7 +103,9 @@ def setup_output(args, W, H, fps):
         return None, True, False, None
 
     # default output path
-    out_path = args.save_out if args.save_out else infer_out_path(args.source)
+    out_path = (
+        args.save_out if args.save_out else infer_out_path(args.source, args.run_root)
+    )
     out_path = _ask_user_confirmation(out_path)
 
     try:

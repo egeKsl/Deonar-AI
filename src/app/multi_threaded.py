@@ -134,9 +134,7 @@ def _prepare_injected_context(args, cap_info):
 
         try:
             decisions_path = (
-                args.csv_decisions
-                if hasattr(args, "dual_lines_enabled", False)
-                else None
+                args.csv_decisions if hasattr(args, "dual_lines_enabled") else None
             )
             injected_csvs = CsvWriters(
                 events_path=args.csv_events,

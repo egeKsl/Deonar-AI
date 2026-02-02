@@ -20,6 +20,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Optional, Tuple, Union
+from datetime import datetime
+import re
 
 # Try to use project logger if available; otherwise fallback to print
 try:
@@ -522,6 +524,19 @@ def load_config(
     except Exception as e:
         log.error("CONFIG", f"Missing/invalid paths: {e}")
         raise
+    
+    def _sanitize_name(s: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9._-]+", "_", s)
+
+    # ---- Run ID (single source of truth) ----
+    now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    source_name = Path(source_res).stem
+    source_name = _sanitize_name(source_name)
+
+    run_id = f"{now}_{source_name}"
+
+    run_root = base_dir / "outputs" / "runs" / run_id
 
     # Inference knobs
     inf = cfg.get("inference", {})
@@ -962,22 +977,20 @@ def load_config(
         allow_blank=True,
     )
     csv_events = (
-        _resolve_path(csv_events, str(base_dir / "outputs" / "events"))
-        if csv_events
-        else None
+        _resolve_path(csv_events, str(run_root / "events")) if csv_events else None
     )
     csv_timeseries = (
-        _resolve_path(csv_timeseries, str(base_dir / "outputs" / "timeseries"))
+        _resolve_path(csv_timeseries, str(run_root / "timeseries"))
         if csv_timeseries
         else None
     )
     csv_decisions = (
-        _resolve_path(csv_decisions, str(base_dir / "outputs" / "decisions"))
+        _resolve_path(csv_decisions, str(run_root / "decisions"))
         if csv_decisions
         else None
     )
     csv_metrics = (
-        _resolve_path(csv_metrics, str(base_dir / "outputs" / "metrics"))
+        _resolve_path(csv_metrics, str(run_root / "metrics"))
         if csv_metrics
         else None
     )
@@ -1136,7 +1149,7 @@ def load_config(
         default="mp4v",
     )
     video_path = (
-        _resolve_path(video_path, str(base_dir / "outputs" / "video"))
+        _resolve_path(video_path, str(run_root / "video"))
         if video_path
         else None
     )
@@ -1169,6 +1182,10 @@ def load_config(
         "paths": {
             "weights": weights_res,
             "source": source_res,
+        },
+        "run": {
+            "id": run_id,
+            "root": str(run_root),
         },
         "inference": {
             "device": device_norm,
@@ -1266,6 +1283,8 @@ def load_config(
         # Required
         weights=CONFIG["paths"]["weights"],
         source=CONFIG["paths"]["source"],
+        run_id=CONFIG["run"]["id"],
+        run_root=CONFIG["run"]["root"],
         # Core knobs (flat)
         device=CONFIG["inference"]["device"],
         half=CONFIG["inference"]["half"],

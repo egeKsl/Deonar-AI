@@ -9,6 +9,7 @@ __pycache__/
 *.jpg
 *.png
 *.log
+data/
 logs/
 outputs/
 # Python packaging artifacts
