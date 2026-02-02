@@ -232,7 +232,7 @@ class DisplayWorker(threading.Thread):
                 ts_path = self.args.csv_timeseries
                 decisions_path = (
                     self.args.csv_decisions
-                    if hasattr(self.args, "dual_lines_enabled", False)
+                    if hasattr(self.args, "dual_lines_enabled")
                     else None
                 )
                 self.csvs = CsvWriters(events_path, ts_path, decisions_path)
@@ -612,6 +612,7 @@ class DisplayWorker(threading.Thread):
                                 last_full_disp,
                                 self.args.source,
                                 getattr(feeder, "out_index", None),
+                                self.args.run_root,
                             )
                         except Exception:
                             log.debug(

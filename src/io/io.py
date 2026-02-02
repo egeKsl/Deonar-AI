@@ -30,7 +30,7 @@ def infer_out_path(inp_path, run_root=None):
     # Create a subfolder under project root
     out_dir = Path("outputs") / "videos"
     if run_root is not None:
-        out_dir = Path(run_root) / "video"
+        out_dir = Path(run_root) / "videos"
     out_dir.mkdir(parents=True, exist_ok=True)
     # Build the final output path
     out_file = f"{base}.annotated{ext or '.mp4'}"

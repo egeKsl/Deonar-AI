@@ -59,17 +59,26 @@ def _setup_windows(show_windows, args, rw, rh, W, H):
         cv2.resizeWindow("Full View", 960, int(960 * H / max(1, W)))
 
 
-def _save_screenshot(full_disp, source_path, frame_idx):
-    """Save a unique screenshot into outputs/images/ with prefix = input filename."""
-    out_dir = Path("outputs/images")
+def _save_screenshot(full_disp, source_path, frame_idx, run_root):
+    """
+    Save a unique screenshot under:
+      <run_root>/images/<source>_<timestamp>_f<frame>.jpg
+    """
+    if full_disp is None:
+        raise
+
+    # images directory inside this run
+    out_dir = Path(run_root) / "images"
     out_dir.mkdir(parents=True, exist_ok=True)
+
     prefix = Path(source_path).stem
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     fname = f"{prefix}_{ts}_f{frame_idx}.jpg"
+
     out_path = out_dir / fname
-    if full_disp is not None:
-        cv2.imwrite(str(out_path), full_disp)
-        log.success("DRAWING-SCREENSHOT", f"Saved: {out_path}")
+
+    cv2.imwrite(str(out_path), full_disp)
+    log.success("DRAWING-SCREENSHOT", f"Saved: {out_path}")
 
 
 # -------------------- Extracted drawing helpers --------------------

@@ -369,8 +369,8 @@ def _update_counts_dual_for_frame(
                 ts_s = feeder.frame_in / max(1.0, fps)
                 wrote = csvs.write_event(
                     ts_s,
-                    feeder.out_index,  # processed index
                     feeder.frame_in,  # source/original index
+                    feeder.out_index,  # processed index
                     int(tid),
                     dirB,
                     cx,
