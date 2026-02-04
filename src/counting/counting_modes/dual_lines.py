@@ -35,7 +35,11 @@ def _line_side(
 
 
 def _confirm_side(
-    side_hist: deque, need_frames: int, min_ratio: float = 0.6
+    side_hist: deque,
+    need_frames: int,
+    min_ratio: float = 0.6,
+    min_nonzero_abs: int = 1,
+    min_nonzero_ratio: float = 0.0,
 ) -> Optional[int]:
     """
     Confirm a stable side (-1/+1) from a deque of recent side-sign samples.
@@ -56,6 +60,10 @@ def _confirm_side(
     window = list(side_hist)[-need_frames:]
     nonzeros = [s for s in window if s != 0]
     if not nonzeros:
+        return None
+    # Require a minimum count of non-zero samples to avoid confirming from noise.
+    min_n = max(int(min_nonzero_abs or 0), int(math.ceil(need_frames * min_nonzero_ratio)))
+    if len(nonzeros) < max(1, min_n):
         return None
 
     # STRICT: all identical and we have need_frames non-zero samples
@@ -115,10 +123,16 @@ class MotionIntentAnalyzer:
         min_frames: int = 6,
         min_displacement_px: float = 12.0,
         max_lookback_frames: int = 30,
+        dir_consistency_ratio: float = 0.7,
+        dir_consistency_min_frames: int = 4,
+        axis_min_displacement_px: float = 10.0,
     ):
         self.min_frames = min_frames
         self.min_disp = min_displacement_px
         self.max_lookback = max_lookback_frames
+        self.dir_consistency_ratio = dir_consistency_ratio
+        self.dir_consistency_min_frames = dir_consistency_min_frames
+        self.axis_min_disp = axis_min_displacement_px
 
     def analyze(
         self,
@@ -156,17 +170,39 @@ class MotionIntentAnalyzer:
         if disp < self.min_disp:
             return self._reject(dx, dy, "motion too small")
 
-        # dominant axis
-        dominant_axis = "x" if abs(dx) > abs(dy) else "y"
-
-        # project motion onto line normal
+        # line normal (direction of crossing)
         lx, ly = line_vector
         ln = (lx * lx + ly * ly) ** 0.5 or 1.0
         nx, ny = -ly / ln, lx / ln
 
         projection = dx * nx + dy * ny
-
         motion_dir = "up" if projection > 0 else "down"
+
+        # Axis aligned with the normal (dominant component of normal)
+        dominant_axis = "x" if abs(nx) >= abs(ny) else "y"
+        axis_disp = abs(dx) if dominant_axis == "x" else abs(dy)
+        if axis_disp < self.axis_min_disp:
+            return self._reject(dx, dy, "axis displacement too small", dominant_axis)
+
+        # Direction consistency across recent frames (along dominant axis)
+        axis_steps = []
+        for i in range(1, len(past)):
+            _, x_prev, y_prev = past[i - 1]
+            _, x_cur, y_cur = past[i]
+            step = (x_cur - x_prev) if dominant_axis == "x" else (y_cur - y_prev)
+            if step != 0:
+                axis_steps.append(step)
+
+        if axis_steps:
+            overall_sign = 1 if (dx if dominant_axis == "x" else dy) > 0 else -1
+            consistent = sum(1 for s in axis_steps if (s > 0) == (overall_sign > 0))
+            if (
+                len(axis_steps) < self.dir_consistency_min_frames
+                or (consistent / len(axis_steps)) < self.dir_consistency_ratio
+            ):
+                return self._reject(dx, dy, "direction inconsistent", dominant_axis)
+        else:
+            return self._defer("no directional steps")
 
         if motion_dir != geometry_direction:
             return self._reject(
@@ -229,6 +265,14 @@ class DualLineCounter:
         id_lock_frames: int = 60,
         quiet: bool = False,
         debug_enabled: bool = False,
+        min_nonzero_abs: int = 3,
+        min_nonzero_ratio: float = 0.6,
+        motion_min_frames: int = 6,
+        motion_min_displacement_px: float = 12.0,
+        motion_max_lookback_frames: int = 30,
+        motion_dir_consistency_ratio: float = 0.7,
+        motion_dir_consistency_min_frames: int = 4,
+        motion_axis_min_displacement_px: float = 10.0,
     ):
         self.A = tuple(lineA_roi)
         self.B = tuple(lineB_roi)
@@ -237,6 +281,8 @@ class DualLineCounter:
         self.lock_frames = max(1, int(id_lock_frames))
         self.quiet = bool(quiet)
         self.debug_enabled = bool(debug_enabled)
+        self.min_nonzero_abs = max(1, int(min_nonzero_abs))
+        self.min_nonzero_ratio = float(min_nonzero_ratio)
 
         # per-tid histories and last confirmed side
         self.side_hist_A = defaultdict(lambda: deque(maxlen=max(3, self.hyst)))
@@ -253,7 +299,14 @@ class DualLineCounter:
         # ---- Phase 1: motion history (eyes) ----
         self.motion = MotionHistory(max_frames=60)
 
-        self.motion_analyzer = MotionIntentAnalyzer()
+        self.motion_analyzer = MotionIntentAnalyzer(
+            min_frames=motion_min_frames,
+            min_displacement_px=motion_min_displacement_px,
+            max_lookback_frames=motion_max_lookback_frames,
+            dir_consistency_ratio=motion_dir_consistency_ratio,
+            dir_consistency_min_frames=motion_dir_consistency_min_frames,
+            axis_min_displacement_px=motion_axis_min_displacement_px,
+        )
 
         # ---- Phase 1.5: geometry evidence buffer ----
         self.geometry_events = []  # List[dict]
@@ -343,8 +396,18 @@ class DualLineCounter:
         if sB != 0:
             self.side_hist_B[tid].append(sB)
 
-        cA = _confirm_side(self.side_hist_A[tid], self.hyst)
-        cB = _confirm_side(self.side_hist_B[tid], self.hyst)
+        cA = _confirm_side(
+            self.side_hist_A[tid],
+            self.hyst,
+            min_nonzero_abs=self.min_nonzero_abs,
+            min_nonzero_ratio=self.min_nonzero_ratio,
+        )
+        cB = _confirm_side(
+            self.side_hist_B[tid],
+            self.hyst,
+            min_nonzero_abs=self.min_nonzero_abs,
+            min_nonzero_ratio=self.min_nonzero_ratio,
+        )
 
         # Check A flip (create pending entry)
         if cA is not None:
@@ -435,7 +498,12 @@ class DualLineCounter:
         sA = self._side_sign(cx, cy, self.A, margin_px)
         if sA != 0:
             self.side_hist_A[tid].append(sA)
-        cA = _confirm_side(self.side_hist_A[tid], self.hyst)
+        cA = _confirm_side(
+            self.side_hist_A[tid],
+            self.hyst,
+            min_nonzero_abs=self.min_nonzero_abs,
+            min_nonzero_ratio=self.min_nonzero_ratio,
+        )
         if cA is not None:
             prevA = self.last_side_A.get(tid, None)
             self.last_side_A[tid] = cA
@@ -471,7 +539,12 @@ class DualLineCounter:
         sB = self._side_sign(cx, cy, self.B, margin_px)
         if sB != 0:
             self.side_hist_B[tid].append(sB)
-        cB = _confirm_side(self.side_hist_B[tid], self.hyst)
+        cB = _confirm_side(
+            self.side_hist_B[tid],
+            self.hyst,
+            min_nonzero_abs=self.min_nonzero_abs,
+            min_nonzero_ratio=self.min_nonzero_ratio,
+        )
         if cB is not None:
             prevB = self.last_side_B.get(tid, None)
             self.last_side_B[tid] = cB

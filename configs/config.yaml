@@ -67,8 +67,8 @@ paths:
   # If relative:
   #   - weights resolves under models/
   #   - source  resolves under data/  (unless it looks like rtsp/http)
-  weights: goat_yolo12n_img1024_bs12_lr0.0075_sgd_best.pt
-  source: rtsp://127.0.0.1:8554/mystream
+  weights: goat_yolo11n_img1024_bs16_lr0.0033_sgd_best.pt
+  source: cam1_D01_02m25s_08m03s.mp4
 
 # ------------------------------
 # Inference (YOLO / Ultralytics)
@@ -113,15 +113,54 @@ counting:
     near_border_px: 24             # acceptance radius to zone border for inferred entry
 
   # ---- dual-line mode inside ROI ----
+
   dual:
     enabled: true                  # true/false
     mode: recover                  # verify | recover
-    offset_px: 150                 # vertical Δ between A & B (px in ROI)
+    offset_px: 150                 # vertical ? between A & B (px in ROI)
     thick_px: 2                    # draw thickness only (doesn't alter logic)
-    hyst_frames: 2                 # side confirmation anti-flicker per line
-    window_frames: 80              # A→B pairing window (verify mode)
-    id_lock_frames: 60             # cooldown per track id after a count
+    hyst_frames: 5                 # side confirmation anti-flicker per line
+    window_frames: 40              # A?B pairing window (verify mode)
+    id_lock_frames: 80             # cooldown per track id after a count
     width_px: 550                  # visual span of B (px), centered on A midpoint
+    profile: slipping_view     # auto-apply profile below (standing_view | slipping_view)
+    # Dual-line hardening (directional robustness)
+    min_nonzero_abs: 4             # require >= N non-zero side samples to confirm side
+    min_nonzero_ratio: 0.67        # require >= ratio of non-zero samples in window
+    # Motion hardening (stronger than geometry)
+    motion_min_frames: 8
+    motion_min_displacement_px: 16.0
+    motion_max_lookback_frames: 30
+    motion_dir_consistency_ratio: 0.70
+    motion_dir_consistency_min_frames: 4
+    motion_axis_min_displacement_px: 12.0
+
+    # Profiles (manual switch: copy values above)
+    profiles:
+      standing_view:
+        hyst_frames: 4
+        window_frames: 35
+        id_lock_frames: 70
+        min_nonzero_abs: 3
+        min_nonzero_ratio: 0.60
+        motion_min_frames: 6
+        motion_min_displacement_px: 14.0
+        motion_max_lookback_frames: 30
+        motion_dir_consistency_ratio: 0.60
+        motion_dir_consistency_min_frames: 3
+        motion_axis_min_displacement_px: 10.0
+      slipping_view:
+        hyst_frames: 5
+        window_frames: 40
+        id_lock_frames: 80
+        min_nonzero_abs: 4
+        min_nonzero_ratio: 0.67
+        motion_min_frames: 8
+        motion_min_displacement_px: 16.0
+        motion_max_lookback_frames: 30
+        motion_dir_consistency_ratio: 0.60
+        motion_dir_consistency_min_frames: 3
+        motion_axis_min_displacement_px: 12.0
 
   # ---- anti-flicker & filters ----
   antiflicker:

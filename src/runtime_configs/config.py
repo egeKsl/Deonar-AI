@@ -491,6 +491,24 @@ def load_config(
     # output_video
     cfg["output_video"] = raw.get("output_video", {})
 
+    # If dual profiles are defined, allow selecting one via counting.dual.profile
+    # This merges the selected profile values into counting.dual before parsing.
+    try:
+        counting_section = cfg.get("counting", {}) if isinstance(cfg.get("counting", {}), dict) else {}
+        dual_section = counting_section.get("dual", {}) if isinstance(counting_section.get("dual", {}), dict) else {}
+        if bool(dual_section.get("enabled", False)):
+            profile_key = dual_section.get("profile")
+            profiles = dual_section.get("profiles", {}) if isinstance(dual_section.get("profiles", {}), dict) else {}
+            if profile_key and profile_key in profiles and isinstance(profiles[profile_key], dict):
+                # Merge selected profile into dual settings (profile values override base)
+                merged = dict(dual_section)
+                merged.update(profiles[profile_key])
+                counting_section["dual"] = merged
+                cfg["counting"] = counting_section
+                log.info("CONFIG", f"Applied dual profile '{profile_key}'")
+    except Exception:
+        pass
+
     # legacy_env if fallback used
     if not used_yaml:
         cfg["legacy_env"] = raw.get("legacy_env", {})
@@ -803,6 +821,80 @@ def load_config(
         ),
         550,
         minv=0,
+    )
+    dual_min_nonzero_abs = _as_int(
+        (
+            dual_cfg.get("min_nonzero_abs")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("DUAL_MIN_NONZERO_ABS")
+        ),
+        3,
+        minv=1,
+    )
+    dual_min_nonzero_ratio = _as_float(
+        (
+            dual_cfg.get("min_nonzero_ratio")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("DUAL_MIN_NONZERO_RATIO")
+        ),
+        0.6,
+        minv=0.0,
+        maxv=1.0,
+    )
+    dual_motion_min_frames = _as_int(
+        (
+            dual_cfg.get("motion_min_frames")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("DUAL_MOTION_MIN_FRAMES")
+        ),
+        6,
+        minv=1,
+    )
+    dual_motion_min_displacement_px = _as_float(
+        (
+            dual_cfg.get("motion_min_displacement_px")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("DUAL_MOTION_MIN_DISP_PX")
+        ),
+        12.0,
+        minv=0.0,
+    )
+    dual_motion_max_lookback_frames = _as_int(
+        (
+            dual_cfg.get("motion_max_lookback_frames")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("DUAL_MOTION_MAX_LOOKBACK")
+        ),
+        30,
+        minv=1,
+    )
+    dual_motion_dir_consistency_ratio = _as_float(
+        (
+            dual_cfg.get("motion_dir_consistency_ratio")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("DUAL_MOTION_DIR_CONSISTENCY")
+        ),
+        0.7,
+        minv=0.0,
+        maxv=1.0,
+    )
+    dual_motion_dir_consistency_min_frames = _as_int(
+        (
+            dual_cfg.get("motion_dir_consistency_min_frames")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("DUAL_MOTION_DIR_MIN_FRAMES")
+        ),
+        4,
+        minv=1,
+    )
+    dual_motion_axis_min_displacement_px = _as_float(
+        (
+            dual_cfg.get("motion_axis_min_displacement_px")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("DUAL_MOTION_AXIS_MIN_DISP_PX")
+        ),
+        10.0,
+        minv=0.0,
     )
 
     # viz
@@ -1210,6 +1302,14 @@ def load_config(
                 "window_frames": dual_window_frames,
                 "id_lock_frames": dual_id_lock_frames,
                 "width_px": dual_width_px,
+                "min_nonzero_abs": dual_min_nonzero_abs,
+                "min_nonzero_ratio": dual_min_nonzero_ratio,
+                "motion_min_frames": dual_motion_min_frames,
+                "motion_min_displacement_px": dual_motion_min_displacement_px,
+                "motion_max_lookback_frames": dual_motion_max_lookback_frames,
+                "motion_dir_consistency_ratio": dual_motion_dir_consistency_ratio,
+                "motion_dir_consistency_min_frames": dual_motion_dir_consistency_min_frames,
+                "motion_axis_min_displacement_px": dual_motion_axis_min_displacement_px,
             },
             "antiflicker": {
                 "min_age": min_age,
@@ -1323,6 +1423,14 @@ def load_config(
         dual_window_frames=CONFIG["counting"]["dual"]["window_frames"],
         dual_id_lock_frames=CONFIG["counting"]["dual"]["id_lock_frames"],
         dual_width_px=CONFIG["counting"]["dual"]["width_px"],
+        dual_min_nonzero_abs=CONFIG["counting"]["dual"]["min_nonzero_abs"],
+        dual_min_nonzero_ratio=CONFIG["counting"]["dual"]["min_nonzero_ratio"],
+        dual_motion_min_frames=CONFIG["counting"]["dual"]["motion_min_frames"],
+        dual_motion_min_displacement_px=CONFIG["counting"]["dual"]["motion_min_displacement_px"],
+        dual_motion_max_lookback_frames=CONFIG["counting"]["dual"]["motion_max_lookback_frames"],
+        dual_motion_dir_consistency_ratio=CONFIG["counting"]["dual"]["motion_dir_consistency_ratio"],
+        dual_motion_dir_consistency_min_frames=CONFIG["counting"]["dual"]["motion_dir_consistency_min_frames"],
+        dual_motion_axis_min_displacement_px=CONFIG["counting"]["dual"]["motion_axis_min_displacement_px"],
         # Viz
         viz_mode=CONFIG["viz"]["mode"],
         viz_crowd_switch=CONFIG["viz"]["crowd_switch"],

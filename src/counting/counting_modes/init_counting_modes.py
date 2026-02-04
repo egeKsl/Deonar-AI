@@ -96,6 +96,24 @@ def _init_dual_lines(args, lines_roi, lines_full, rx, ry, rw, rh):
                 id_lock_frames=args.dual_id_lock_frames,
                 quiet=args.quiet,
                 debug_enabled=args.debug_enabled,
+                min_nonzero_abs=getattr(args, "dual_min_nonzero_abs", 3),
+                min_nonzero_ratio=getattr(args, "dual_min_nonzero_ratio", 0.6),
+                motion_min_frames=getattr(args, "dual_motion_min_frames", 6),
+                motion_min_displacement_px=getattr(
+                    args, "dual_motion_min_displacement_px", 12.0
+                ),
+                motion_max_lookback_frames=getattr(
+                    args, "dual_motion_max_lookback_frames", 30
+                ),
+                motion_dir_consistency_ratio=getattr(
+                    args, "dual_motion_dir_consistency_ratio", 0.7
+                ),
+                motion_dir_consistency_min_frames=getattr(
+                    args, "dual_motion_dir_consistency_min_frames", 4
+                ),
+                motion_axis_min_displacement_px=getattr(
+                    args, "dual_motion_axis_min_displacement_px", 10.0
+                ),
             )
 
             if not args.quiet:
