@@ -1,213 +1,242 @@
-# 🐐 Goat Detection & Counting System
+﻿# 🐐 Goat Detection & Counting System
 
-An advanced computer vision pipeline for **real-time goat detection, tracking, and counting**.
-Built with **YOLO detection + ByteTrack tracking + multi-mode counting (line, dual-line, zone)**, the system is designed for **high accuracy, persistence, and usability** in real farm conditions.
-
-We didn’t just stop at raw detection — this project includes a full visualization & logging stack, with configurable drawing modes, robust CSV outputs, and professional-grade overlays.
+A production‑grade computer vision pipeline for **real‑time goat detection, tracking, and counting** on farm CCTV feeds and recorded video. Built for rugged, noisy environments, the system combines **YOLO detection**, **ByteTrack tracking**, and **multi‑mode counting** (line, dual‑line, zone) with strong logging and visual validation outputs.
 
 ---
 
-## ✨ Features
+## ✨ What This Project Delivers
 
-### 🎯 Detection & Tracking
-
-* **YOLO-based detection** with class filtering.
-* **ByteTrack tracker** for persistent IDs, tuned for minimal ID switches.
-* Adjustable **stride** for frame skipping control (default: `1` = every frame).
-
-### 📊 Counting Modes
-
-* **Single-Line Counting**
-
-  * Count objects crossing a line (up/down).
-  * Anti-flicker hysteresis (`min_side_frames`).
-  * Cooldown frames to prevent double-counting.
-
-* **Dual-Line Counting**
-
-  * **Verify mode**: counts only when the same ID crosses A → B consistently.
-  * **Recover mode**: recovers missed detections with Line B.
-  * Configurable offset (`DUAL_OFFSET_PX`) and width (`DUAL_WIDTH_PX`).
-
-* **Zone Counting**
-
-  * Define a rectangular ROI zone.
-  * Counts entries/exits across edges.
-  * Supports backfill projection visualization for debugging.
-
-### 🎨 Visualization
-
-* **Ultra-Pretty Drawing Engine** (`viz/draw.py`)
-
-  * Configurable modes: `bbox` | `centroid` | `auto`.
-  * **Rounded translucent boxes** with pill-shaped ID chips.
-  * **Minimal centroids** mode for crowded scenes.
-  * Dynamic color hashing per track ID.
-  * Automatic counted-ID recoloring (blue/persist/window modes).
-  * **Readable text labels** with contrast-aware chips.
-
-* **HUD overlays**
-
-  * Live counts (Up / Down / Total).
-  * Frame indices (source & ROI).
-  * Mode indicator (Line / Dual / Zone).
-
-* **Animations**
-
-  * CrossAnimator for `+1` bursts when counts fire.
-  * Pulsing rings and floating text.
-
-### 📂 Outputs
-
-* **CSV Events** (`csv_events.csv`)
-
-  * Deduplicated per `track_id` (no double counting).
-  * Logs: `timestamp_s, src_frame_idx, proc_frame_idx, track_id, direction, cx, cy`.
-
-* **CSV Timeseries** (`csv_timeseries.csv`)
-
-  * Per-second log of cumulative counts: `timestamp_s, up, down, total`.
-
-* **Video Output**
-
-  * Full annotated video saved with progress tracking.
-  * HUD shows effective FPS, ETA, etc.
-
-* **Screenshots**
-
-  * Press `s` to save a snapshot into `/outputs/images/`.
-
-### ⚡ Pipeline Architecture
-
-* Modularized pipeline under `src/pipeline/`:
-
-  * `runner.py` → orchestrator (`run()`).
-  * `init.py` → ROI, dual-line, and zone initialization.
-  * `counts.py` → line, dual-line, and zone counting logic.
-  * `viz/draw.py` → drawing utilities (boxes, centroids, HUDs, animations).
-  * `output/io.py` → CSV writing, video writer, progress bar.
-
-### 🛠 Tech Stack
-
-* **Language:** Python 3.10+
-* **Core CV:** OpenCV
-* **Detection:** YOLOv11 (custom-trained)
-* **Tracking:** ByteTrack (configurable thresholds/buffer)
-* **Data:** CSV event + timeseries logging
-* **Visualization:** Custom OpenCV rendering with pretty overlays
+- ✅ **Accurate counting** in real farm conditions
+- ✅ **Live CCTV support** (RTSP / HTTP / webcam)
+- ✅ **Offline batch processing** for recordings
+- ✅ **Dual‑line counting** for robust direction validation
+- ✅ **CSV audit trails** for verification and analytics
+- ✅ **Annotated video** for evidence and debugging
+- ✅ **WebRTC live preview** for remote monitoring
 
 ---
 
-## ⚙️ Configuration
+## 🎯 Real‑World Use Case (Chute Monitoring)
 
-All major settings are controlled via `.env` or CLI args.
+Goats pass through a chute with two common camera views:
 
-**Example `.env`:**
+- **Standing view (vertical)**
+  - **Up**: bottom → top (entry → exit)
+  - **Down**: top → bottom (exit → entry)
 
-```ini
-# Counting
-COUNT_MODE=line                 # line | dual | zone
-COUNT_LINE_ROI=0.309,0.411,0.546,0.411
+- **Slipping view (horizontal)**
+  - **Up**: right → left (entry → exit)
+  - **Down**: left → right (exit → entry)
 
-# Dual-line mode
-DUAL_LINES_ENABLED=true
-DUAL_MODE=verify                # verify | recover
-DUAL_OFFSET_PX=24
-DUAL_WIDTH_PX=120               # custom width for line B
-DUAL_HYST_FRAMES=2
-DUAL_WINDOW_FRAMES=30
-DUAL_ID_LOCK_FRAMES=60
+This system is hardened to handle **jitter near the line**, **occlusion**, and **tracking instability** while still preserving direction correctness.
 
-# Zone mode
-ZONE_RECT=0.2,0.3,0.5,0.4       # relative [x,y,w,h]
-ZONE_BORN_INSIDE=count_entry
+---
 
-# Detection/Tracking
-WEIGHTS=weights/yolov8.pt
-STRIDE=1
-CONF=0.5
-IOU=0.5
+## 🧠 Counting Modes (Core Logic)
 
-# Drawing
-DRAW_MODE=auto                  # bbox | centroid | auto
-CROWD_SWITCH=6
-BOX_COLOR=0,255,0
-COUNT_BOX_COLOR=255,0,0
-COUNT_BOX_MODE=persist          # persist | window | off
+### 1) **Single‑Line Counting**
+Counts when a track crosses a single line.
+- Uses **side‑history confirmation** to avoid flicker
+- Uses **cooldown frames** to prevent double counts
+
+### 2) **Dual‑Line Counting (Recommended)**
+Counts only when a track crosses **Line A → Line B** in a consistent direction.
+- ✅ **Verify mode**: requires A then B within a time window
+- ✅ **Recover mode**: counts on A, but can recover missed A with B
+- ✅ **Directional hardening**: motion consistency validation
+
+### 3) **Zone Counting**
+Defines a rectangular region and counts entries/exits.
+- Great for pens, gates, or enclosure monitoring
+- Supports **entry/exit inference**
+
+---
+
+## 🏗 Pipeline Architecture
+
+**Offline (Recorded Video)**
+1. Read video
+2. Crop ROI
+3. Detect + track goats
+4. Apply counting mode
+5. Write CSV events & timeseries
+6. Save annotated output video
+
+**Online (Live CCTV / RTSP)**
+1. Capture frames
+2. Apply pacing (sync + autoskip)
+3. Detect + track goats
+4. Apply counting logic
+5. Stream live annotated feed (WebRTC)
+6. Write CSV audit logs in real time
+
+---
+
+## 🧩 Tech Stack
+
+- **Language**: Python 3.10+
+- **Detection**: YOLO (Ultralytics)
+- **Tracking**: ByteTrack
+- **Core CV**: OpenCV
+- **Live Streaming**: WebRTC (aiortc)
+- **Logging**: Rich + CSV output
+
+---
+
+## 📂 Project Structure
+
+- `main.py` → entrypoint
+- `src/app/` → runners (single‑threaded & multi‑threaded)
+- `src/infer/` → model loading + tracking
+- `src/counting/` → counting logic + state
+- `src/display/` → drawing + WebRTC
+- `src/viz` -> output video UI like HUD and countings animation
+- `src/io/` → CSV + output writing
+- `configs/config.yaml` → configuration
+
+---
+
+## ⚙️ Installation (Beginner Friendly)
+
+### 1) Create virtual environment
+```bash
+python -m venv .venv
+```
+
+### 2) Activate it
+**Windows PowerShell:**
+```bash
+.venv/Script/Activate.ps1
+```
+
+**Linux / macOS:**
+```bash
+source .venv/bin/activate
+```
+
+### 3) Install project (editable)
+```bash
+python -m pip install -e . -v
+```
+
+### 4) Run enhanced installer (recommended)
+```bash
+setup-installer --install-cuda-python --install-nvidia-ml --auto-detect-torch --always-progress --verbose --run-after python main.py
 ```
 
 ---
 
-## 🚀 Usage
+## 🔧 Configuration (configs/config.yaml)
 
-1. **Clone repo and install requirements:**
+### ✅ Required
+- `paths.weights`: YOLO model file
+- `paths.source`: video file or RTSP link
 
-   ```bash
-   git clone https://github.com/yourname/goat-detection-ai
-   cd goat-detection-ai
-   pip install -r requirements.txt
-   ```
+### ✅ ROI & Geometry
+Adjust crop to focus only on chute:
+```yaml
+geometry:
+  roi:
+    xr: 0.0000
+    yr: 0.1514
+    wr: 1.0000
+    hr: 0.8472
+```
 
-2. **Place your video under `inputs/`** or use a live camera.
+### ✅ Counting Mode
+```yaml
+counting:
+  mode: line     # line | zone
+```
 
-3. **Run:**
-
-   ```bash
-   python -m src.main \
-     --source inputs/goats.mp4 \
-     --csv-events outputs/events.csv \
-     --csv-timeseries outputs/timeseries.csv \
-     --weights weights/yolov8.pt
-   ```
-
-4. **Optional flags:**
-
-   * `--dual-lines-enabled true` → enable dual-line mode.
-   * `--count-mode zone` → switch to zone counting.
-   * `--draw-mode centroid` → force centroid drawing.
-   * `--stride 2` → skip every other frame.
-
----
-
-## 🖼 Example Visuals
-
-![IMAGE 01](outputs/images/test_20250830_005135_741760_f1397.jpg)
-![IMAGE 02](outputs/images/test2_20250829_163214_006946_f3714.jpg)
-![IMAGE 03](outputs/images/test2_20250829_163225_029370_f3759.jpg)
-![IMAGE 04](outputs/images/test3_20250830_003507_182071_f1350.jpg)
-![IMAGE 05](outputs/images/test3_20250830_003527_033105_f1421.jpg)
-![IMAGE 06](outputs/images/test3_20250830_004436_819709_f1423.jpg)
+### ✅ Dual‑Line (Robust)
+```yaml
+counting:
+  dual:
+    enabled: true
+    mode: recover
+    profile: slipping_view   # or standing_view
+```
 
 ---
 
-## 🧑‍💻 Development Notes
+## 🧪 Dual‑Line Profiles (Automatic)
 
-* **Stride tradeoff:** higher stride = faster but less persistent IDs.
-* **Occlusion robustness:** ByteTrack config tuned; DeepSORT/BoT-SORT can be swapped in later.
-* **Persistence:** Dual-line verify ensures true counts even if IDs flicker.
-* **Neatness:** Drawing layer separated into `viz/draw.py` with `PrettyDrawConfig`.
+Profiles are auto‑applied when `counting.dual.profile` is set:
+
+- `standing_view`
+- `slipping_view`
+
+Each profile adjusts:
+- hysteresis frames
+- non‑zero evidence threshold
+- motion consistency checks
 
 ---
 
-## 📌 Roadmap
+## 📊 Outputs (Audit‑Friendly)
 
-* [ ] Add DeepSORT/BoT-SORT option for re-ID-based tracking.
-* [ ] Export to dashboard (real-time counts + video).
-* [ ] Web-based config editor.
-* [ ] ONNX / TensorRT acceleration.
+### ✅ CSV Events
+- One row per counted goat
+- Includes timestamps + both frame indices
+
+### ✅ CSV Timeseries
+- Per‑second cumulative counts
+
+### ✅ CSV Decisions
+- Motion + geometry decisions for debug
+
+### ✅ Annotated Video
+- Frame overlay with IDs, lines, and counts
+
+---
+
+## 🛰 Live Preview (WebRTC)
+
+Turn on in config:
+```yaml
+webrtc:
+  enable: true
+  host: "0.0.0.0"
+  port: 8081
+```
+
+Visit in browser:
+```
+http://<host>:8081
+```
+
+---
+
+## ✅ Common Usage
+
+Run with YAML config:
+```bash
+python main.py
+```
+
+Switch dual profile:
+```yaml
+counting:
+  dual:
+    profile: standing_view
+```
+
+---
+
+## 🚑 Troubleshooting
+
+- **Wrong direction?** Check line orientation and `profile`.
+- **Counts missing?** Lower motion thresholds.
+- **Too many false counts?** Increase motion consistency.
+- **RTSP stutters?** Enable autoskip in runtime.
 
 ---
 
 ## 📜 License
+MIT License.
 
-MIT License © 2025 Your Name
-
----
-
-## 💡 Credits
-
-* **YOLOv8:** [Ultralytics](https://github.com/ultralytics/ultralytics)
-* **ByteTrack:** [Yifu Zhang et al.](https://github.com/ifzhang/ByteTrack)
-* **Design & Engineering:** Ubada Ghavte
-
----
+## 🙏 Credits
+- Ultralytics YOLO
+- ByteTrack
+- Engineering & Integration by Ubada Ghavte
