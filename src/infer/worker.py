@@ -336,6 +336,178 @@ class InferenceWorker(threading.Thread):
                 )
                 return False
 
+    # ---------------- per-frame helpers ----------------
+    def _extract_item_fields(self, item: dict):
+        """Extract frame, frame_id, and timestamp from the input item."""
+        frame = item.get("frame")
+        frame_id = item.get("frame_index", getattr(item, "frame_index", None))
+        # prefer capture_time (monotonic) else source_time then fallback to now()
+        ts = item.get("capture_time") or item.get("source_time") or time.monotonic()
+        return frame, frame_id, ts
+
+    def _mark_infer_start(self, frame_id):
+        """Mark inference start in metrics (best-effort)."""
+        if hasattr(self, "metrics") and self.metrics is not None:
+            self.metrics.mark(int(frame_id or -1), "infer_start")
+
+    def _ensure_initialized(self, frame) -> bool:
+        """Ensure model and geometry are initialized inside the worker thread."""
+        if self._worker_initialized:
+            return True
+        try:
+            sample = (
+                frame
+                if isinstance(frame, np.ndarray)
+                else (
+                    np.array(frame)
+                    if frame is not None
+                    else np.zeros((480, 640, 3), dtype=np.uint8)
+                )
+            )
+            sample = self._to_numpy_image(sample)
+            self._init(sample)
+            return True
+        except Exception:
+            log.error(
+                "INFER-MODEL",
+                "Initial setup failed in InferenceWorker; stopping.",
+            )
+            log.debug("INFER-MODEL", traceback.format_exc())
+            self.stop_event.set()
+            return False
+
+    def _to_full_frame(self, frame):
+        """Convert incoming frame to HWC uint8 numpy image."""
+        try:
+            return self._to_numpy_image(frame)
+        except Exception as e:
+            log.error(
+                "INFER-MODEL", f"Failed converting capture frame to numpy: {e}"
+            )
+            log.debug("INFER-MODEL", traceback.format_exc())
+            return None
+
+    def _crop_roi(self, full_frame: np.ndarray):
+        """Crop ROI using current geometry, with bounds clamping."""
+        rx, ry, rw, rh = (
+            int(self.rx or 0),
+            int(self.ry or 0),
+            int(self.rw or full_frame.shape[1]),
+            int(self.rh or full_frame.shape[0]),
+        )
+        Hf, Wf = full_frame.shape[:2]
+        rx = max(0, min(rx, Wf - 1))
+        ry = max(0, min(ry, Hf - 1))
+        rw = max(1, min(rw, Wf - rx))
+        rh = max(1, min(rh, Hf - ry))
+        roi = full_frame[ry : ry + rh, rx : rx + rw].copy()
+        return roi, rx, ry, rw, rh, Wf, Hf
+
+    def _build_feeder(self, item: dict, roi, full_frame, rx, ry, rw, rh, Wf, Hf):
+        """Build feeder-like object to preserve downstream contract."""
+        feeder = _FeederLike()
+        feeder.src_frame_idx = int(
+            item.get("frame_index") if item.get("frame_index") is not None else 0
+        )
+        feeder.proc_frame_idx = int(self.out_index_counter)
+        # keep compatibility — set legacy attributes but prefer explicit names
+        feeder.frame_in = feeder.src_frame_idx
+        feeder.out_index = feeder.proc_frame_idx
+        feeder.roi = roi
+        feeder.full = full_frame
+        feeder.rx = rx
+        feeder.ry = ry
+        feeder.rw = rw
+        feeder.rh = rh
+        feeder.W = Wf
+        feeder.H = Hf
+        return feeder
+
+    def _run_track_once(self, roi, frame_id):
+        """Run model tracking for a single ROI frame."""
+        try:
+            t0 = time.perf_counter()
+            dets = track_once(
+                self.model,
+                roi,
+                self.args,
+                self.tracker_yaml,
+                self.roi_area,
+                None,
+            )
+            t1 = time.perf_counter()
+            infer_time = t1 - t0
+            if infer_time and infer_time > 0:
+                self._fps_buf.append(1.0 / infer_time)
+                if len(self._fps_buf) > self._fps_buf_len:
+                    self._fps_buf.pop(0)
+            return dets, infer_time
+        except Exception as e:
+            log.error("INFER-MODEL", f"track_once failed on frame {frame_id}: {e}")
+            log.debug("INFER-MODEL", traceback.format_exc())
+            return [], None
+
+    def _build_result_payload(self, frame_id, ts, full_frame, roi, dets, feeder):
+        """Build the stable result dict that DisplayWorker consumes."""
+        return {
+            "frame_id": frame_id,
+            "timestamp": ts,
+            "frame": full_frame,
+            "roi": roi,
+            "dets": dets,
+            "feeder": feeder,
+            "frame_in_counter": self.frame_in_counter,
+            "out_index_counter": self.out_index_counter,
+            "avg_fps": (
+                (sum(self._fps_buf) / len(self._fps_buf))
+                if len(self._fps_buf) > 0
+                else 0.0
+            ),
+            "pacing_out_q_fill": (
+                self.pacing_out_q.qsize()
+                if hasattr(self.pacing_out_q, "qsize")
+                else None
+            ),
+            "pacing_out_q_max": (
+                self.pacing_out_q.maxsize
+                if hasattr(self.pacing_out_q, "maxsize")
+                else None
+            ),
+            "result_q_fill": (
+                self.result_queue.qsize()
+                if hasattr(self.result_queue, "qsize")
+                else None
+            ),
+            "result_q_max": (
+                self.result_queue.maxsize
+                if hasattr(self.result_queue, "maxsize")
+                else None
+            ),
+        }
+
+    def _mark_infer_end(self, frame_id, infer_time):
+        """Mark inference end in metrics (best-effort)."""
+        if hasattr(self, "metrics") and self.metrics is not None:
+            self.metrics.mark(
+                int(frame_id or -1),
+                "infer_end",
+                ts=time.perf_counter(),
+                extra={"infer_wall_s": infer_time},
+            )
+
+    def _mark_result_dropped(self):
+        """Increment drop counter in metrics (best-effort)."""
+        if hasattr(self, "metrics") and self.metrics is not None:
+            self.metrics.incr("infer_result_dropped")
+
+    def _task_done(self):
+        """Mark the pacing queue item as processed (safe-guarded)."""
+        try:
+            if hasattr(self.pacing_out_q, "task_done"):
+                self.pacing_out_q.task_done()
+        except Exception:
+            pass
+
     # ---------------- main run loop ----------------
     def run(self):
         """
@@ -362,150 +534,36 @@ class InferenceWorker(threading.Thread):
             try:
                 # item contract:
                 # { "frame": np.ndarray, "frame_index": int, "capture_time": float, "source_time": Optional[float], ... }
-                frame = item.get("frame")
-                frame_id = item.get("frame_index", getattr(item, "frame_index", None))
-                # prefer capture_time (monotonic) else source_time then fallback to now()
-                ts = (
-                    item.get("capture_time")
-                    or item.get("source_time")
-                    or time.monotonic()
-                )
+                frame, frame_id, ts = self._extract_item_fields(item)
 
                 # persistent counters (one increment per frame read)
                 self.frame_in_counter += 1
                 
-                if hasattr(self, "metrics") and self.metrics is not None:
-                    self.metrics.mark(int(frame_id or -1), "infer_start")
+                self._mark_infer_start(frame_id)
 
                 # ensure initialized (model + geometry) inside thread using a safe sample
-                if not self._worker_initialized:
-                    try:
-                        sample = (
-                            frame
-                            if isinstance(frame, np.ndarray)
-                            else (
-                                np.array(frame)
-                                if frame is not None
-                                else np.zeros((480, 640, 3), dtype=np.uint8)
-                            )
-                        )
-                        sample = self._to_numpy_image(sample)
-                        self._init(sample)
-                    except Exception:
-                        log.error(
-                            "INFER-MODEL",
-                            "Initial setup failed in InferenceWorker; stopping.",
-                        )
-                        log.debug("INFER-MODEL", traceback.format_exc())
-                        self.stop_event.set()
-                        break
+                if not self._ensure_initialized(frame):
+                    break
 
                 # normalize to numpy HWC uint8
-                try:
-                    full_frame = self._to_numpy_image(frame)
-                except Exception as e:
-                    log.error(
-                        "INFER-MODEL", f"Failed converting capture frame to numpy: {e}"
-                    )
-                    log.debug("INFER-MODEL", traceback.format_exc())
+                full_frame = self._to_full_frame(frame)
+                if full_frame is None:
                     # skip frame
                     continue
 
                 # crop ROI cleanly
-                rx, ry, rw, rh = (
-                    int(self.rx or 0),
-                    int(self.ry or 0),
-                    int(self.rw or full_frame.shape[1]),
-                    int(self.rh or full_frame.shape[0]),
-                )
-                Hf, Wf = full_frame.shape[:2]
-                rx = max(0, min(rx, Wf - 1))
-                ry = max(0, min(ry, Hf - 1))
-                rw = max(1, min(rw, Wf - rx))
-                rh = max(1, min(rh, Hf - ry))
-                roi = full_frame[ry : ry + rh, rx : rx + rw].copy()
+                roi, rx, ry, rw, rh, Wf, Hf = self._crop_roi(full_frame)
 
                 # prepare feeder-like object (used by processing functions in DisplayWorker)
-                feeder = _FeederLike()
-                feeder.src_frame_idx = int(
-                    item.get("frame_index")
-                    if item.get("frame_index") is not None
-                    else 0
-                )
-                feeder.proc_frame_idx = int(self.out_index_counter)
-                # keep compatibility — set legacy attributes but prefer explicit names
-                feeder.frame_in = feeder.src_frame_idx
-                feeder.out_index = feeder.proc_frame_idx
-                feeder.roi = roi
-                feeder.full = full_frame
-                feeder.rx = rx
-                feeder.ry = ry
-                feeder.rw = rw
-                feeder.rh = rh
-                feeder.W = Wf
-                feeder.H = Hf
+                feeder = self._build_feeder(item, roi, full_frame, rx, ry, rw, rh, Wf, Hf)
 
                 # call model tracking
-                try:
-                    t0 = time.perf_counter()
-                    dets = track_once(
-                        self.model,
-                        roi,
-                        self.args,
-                        self.tracker_yaml,
-                        self.roi_area,
-                        None,
-                    )
-                    t1 = time.perf_counter()
-                    infer_time = t1 - t0
-                    if infer_time and infer_time > 0:
-                        self._fps_buf.append(1.0 / infer_time)
-                        if len(self._fps_buf) > self._fps_buf_len:
-                            self._fps_buf.pop(0)
-                except Exception as e:
-                    log.error(
-                        "INFER-MODEL", f"track_once failed on frame {frame_id}: {e}"
-                    )
-                    log.debug("INFER-MODEL", traceback.format_exc())
-                    dets = []
-                    infer_time = None
+                dets, infer_time = self._run_track_once(roi, frame_id)
 
                 # build stable result payload
-                result = {
-                    "frame_id": frame_id,
-                    "timestamp": ts,
-                    "frame": full_frame,
-                    "roi": roi,
-                    "dets": dets,
-                    "feeder": feeder,
-                    "frame_in_counter": self.frame_in_counter,
-                    "out_index_counter": self.out_index_counter,
-                    "avg_fps": (
-                        (sum(self._fps_buf) / len(self._fps_buf))
-                        if len(self._fps_buf) > 0
-                        else 0.0
-                    ),
-                    "pacing_out_q_fill": (
-                        self.pacing_out_q.qsize()
-                        if hasattr(self.pacing_out_q, "qsize")
-                        else None
-                    ),
-                    "pacing_out_q_max": (
-                        self.pacing_out_q.maxsize
-                        if hasattr(self.pacing_out_q, "maxsize")
-                        else None
-                    ),
-                    "result_q_fill": (
-                        self.result_queue.qsize()
-                        if hasattr(self.result_queue, "qsize")
-                        else None
-                    ),
-                    "result_q_max": (
-                        self.result_queue.maxsize
-                        if hasattr(self.result_queue, "maxsize")
-                        else None
-                    ),
-                }
+                result = self._build_result_payload(
+                    frame_id, ts, full_frame, roi, dets, feeder
+                )
 
                 # push result (non-blocking)
                 frame_proc = self._safe_put_result(result)
@@ -514,11 +572,9 @@ class InferenceWorker(threading.Thread):
                     self.out_index_counter += (
                         1  # Frame successfully processed and sent to result_queue
                     )
-                    if hasattr(self, "metrics") and self.metrics is not None:
-                        self.metrics.mark(int(frame_id or -1), "infer_end", ts=time.perf_counter(), extra={"infer_wall_s": infer_time})
+                    self._mark_infer_end(frame_id, infer_time)
                 else:
-                    if hasattr(self, "metrics") and self.metrics is not None:
-                        self.metrics.incr("infer_result_dropped")
+                    self._mark_result_dropped()
                     # dropped result; do not increment out_index_counter
                     pass
             except Exception as e:
@@ -527,11 +583,7 @@ class InferenceWorker(threading.Thread):
                 # continue (we still want to call task_done() for the consumed item)
             finally:
                 # mark the pacing_out_q item as processed (safe-guarded)
-                try:
-                    if hasattr(self.pacing_out_q, "task_done"):
-                        self.pacing_out_q.task_done()
-                except Exception:
-                    pass
+                self._task_done()
 
         log.info("INFER-WORKER", "InferenceWorker exiting")
 

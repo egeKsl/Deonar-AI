@@ -358,300 +358,307 @@ class DisplayWorker(threading.Thread):
             self._lineB_full,
         )
 
-    # ---------------- main run loop ----------------
-    def run(self):
-        log.info("DISPLAY-WORKER", "DisplayWorker started")
-        last_full_disp = None
-        while not self.stop_event.is_set():
+    # ---------------- per-frame helpers ----------------
+    def _extract_result_fields(self, res: dict):
+        """Extract commonly used fields from a result dict with safe fallbacks."""
+        frame = res.get("frame")
+        roi = res.get("roi")
+        feeder = res.get("feeder")
+        frame_in = res.get("frame_in_counter") or (
+            getattr(feeder, "frame_in", None) if feeder else None
+        )
+        out_idx = res.get("out_index_counter") or (
+            getattr(feeder, "out_index", None) if feeder else None
+        )
+        dets = res.get("dets") or []
+        return frame, roi, feeder, frame_in, out_idx, dets
+
+    def _prepare_frame_context(self, res: dict, frame, roi):
+        """Prepare drawing, geometry, lines, and dual-line state for this frame."""
+        sample_for_drawing = frame if frame is not None else roi
+        self._ensure_drawing(sample_for_drawing)
+
+        rx, ry, rw, rh, W, H = self._derive_geometry(res)
+        lines_roi, lines_full = self._ensure_lines(rx, ry, rw, rh)
+        use_dual, dual_obj, lineA_roi, lineB_roi, lineA_full, lineB_full = (
+            self._ensure_dual(rx, ry, rw, rh)
+        )
+        return rx, ry, rw, rh, W, H, lines_roi, lines_full, use_dual, dual_obj, lineA_roi, lineB_roi, lineA_full, lineB_full
+
+    def _apply_counting(
+        self,
+        dets,
+        feeder,
+        fps,
+        lines_roi,
+        lines_full,
+        use_dual,
+        dual_obj,
+        lineA_roi,
+        lineA_full,
+        lineB_roi,
+        lineB_full,
+    ):
+        """Run the appropriate counting mode for this frame."""
+        try:
+            if getattr(self.args, "use_zone", False):
+                process_frame_zone(
+                    dets,
+                    None,
+                    feeder,
+                    fps,
+                    self.args,
+                    self.state,
+                    self.csvs,
+                    self.colorer,
+                )
+            elif use_dual and dual_obj is not None:
+                process_frame_dual(
+                    dets,
+                    dual_obj,
+                    feeder,
+                    fps,
+                    self.args,
+                    self.state,
+                    self.csvs,
+                    self.colorer,
+                    self.animator,
+                    lineA_roi,
+                    lineA_full,
+                    lineB_roi,
+                    lineB_full,
+                )
+            else:
+                process_frame_line(
+                    dets,
+                    lines_roi,
+                    lines_full,
+                    feeder,
+                    fps,
+                    self.args,
+                    self.state,
+                    self.animator,
+                    self.csvs,
+                    self.colorer,
+                )
+        except Exception:
+            log.error(
+                "DISPLAY-WORKER",
+                f"process_frame_* failed: {traceback.format_exc()}",
+            )
+
+    def _compose_display_frames(
+        self,
+        frame,
+        roi,
+        dets,
+        feeder,
+        rx,
+        ry,
+        rw,
+        rh,
+        W,
+        H,
+        lines_roi,
+        lines_full,
+        use_dual,
+        lineA_roi,
+        lineB_roi,
+        lineA_full,
+        lineB_full,
+        res,
+    ):
+        """Compose ROI and full display frames with overlays."""
+        try:
+            roi_frame = (
+                roi
+                if roi is not None
+                else (
+                    frame.copy()
+                    if frame is not None
+                    else (255 * np.ones((rh, rw, 3), dtype=np.uint8))
+                )
+            )
+            roi_disp, full_disp = _compose_frames(
+                roi_frame=roi_frame,
+                dets=dets,
+                lines_roi=lines_roi,
+                lines_full=lines_full,
+                feeder=feeder,
+                rw=rw,
+                rh=rh,
+                rx=rx,
+                ry=ry,
+                W=W,
+                H=H,
+                total=self.total_frames,
+                state=self.state,
+                animator=self.animator,
+                colorer=self.colorer,
+                args=self.args,
+                pretty_cfg=self.pretty_cfg,
+                use_zone=getattr(self.args, "use_zone", False),
+                zone=None,
+                zone_rect_roi=None,
+                zone_rect_full=None,
+                use_dual=use_dual,
+                lineA_roi=lineA_roi,
+                lineB_roi=lineB_roi,
+                lineA_full=lineA_full,
+                lineB_full=lineB_full,
+                threaded_streaming=True,
+                res=res,
+            )
+            return roi_disp, full_disp
+        except Exception:
+            log.error("DISPLAY-WORKER", "compose_frames failed")
+            log.debug("DISPLAY-WORKER", traceback.format_exc())
             try:
-                res = self.result_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
-
-            try:
-                # stable field extraction
-                frame = res.get("frame")
-                roi = res.get("roi")
-                feeder = res.get("feeder")
-                frame_in = res.get("frame_in_counter") or (
-                    getattr(feeder, "frame_in", None) if feeder else None
-                )
-                out_idx = res.get("out_index_counter") or (
-                    getattr(feeder, "out_index", None) if feeder else None
-                )
-                dets = res.get("dets") or []
-
-                if frame is None and roi is None:
-                    log.debug(
-                        "DISPLAY-WORKER", "Empty result (no frame and no roi); skipping"
+                fallback = roi if roi is not None and hasattr(roi, "copy") else None
+                if fallback is None:
+                    fallback = 255 * np.ones(
+                        (int(rh or 240), int(rw or 320), 3), dtype=np.uint8
                     )
-                    continue
-
-                # ensure drawing/csvs/windows prepared
-                sample_for_drawing = frame if frame is not None else roi
-                self._ensure_drawing(sample_for_drawing)
-
-                # derive geometry & lines
-                rx, ry, rw, rh, W, H = self._derive_geometry(res)
-                lines_roi, lines_full = self._ensure_lines(rx, ry, rw, rh)
-                use_dual, dual_obj, lineA_roi, lineB_roi, lineA_full, lineB_full = (
-                    self._ensure_dual(rx, ry, rw, rh)
-                )
-
-                # run counting/tracking logic (same as run_original)
-                try:
-                    fps = res.get("avg_fps", 0.0)
-                    if getattr(self.args, "use_zone", False):
-                        process_frame_zone(
-                            dets,
-                            None,
-                            feeder,
-                            fps,
-                            self.args,
-                            self.state,
-                            self.csvs,
-                            self.colorer,
-                        )
-                    elif use_dual and dual_obj is not None:
-                        process_frame_dual(
-                            dets,
-                            dual_obj,
-                            feeder,
-                            fps,
-                            self.args,
-                            self.state,
-                            self.csvs,
-                            self.colorer,
-                            self.animator,
-                            lineA_roi,
-                            lineA_full,
-                            lineB_roi,
-                            lineB_full,
-                        )
-                    else:
-                        process_frame_line(
-                            dets,
-                            lines_roi,
-                            lines_full,
-                            feeder,
-                            fps,
-                            self.args,
-                            self.state,
-                            self.animator,
-                            self.csvs,
-                            self.colorer,
-                        )
-                except Exception:
-                    log.error(
-                        "DISPLAY-WORKER",
-                        f"process_frame_* failed: {traceback.format_exc()}",
-                    )
-
-                # compose frames
-                try:
-                    roi_frame = (
-                        roi
-                        if roi is not None
-                        else (
-                            frame.copy()
-                            if frame is not None
-                            else (255 * np.ones((rh, rw, 3), dtype=np.uint8))
-                        )
-                    )
-                    roi_disp, full_disp = _compose_frames(
-                        roi_frame=roi_frame,
-                        dets=dets,
-                        lines_roi=lines_roi,
-                        lines_full=lines_full,
-                        feeder=feeder,
-                        rw=rw,
-                        rh=rh,
-                        rx=rx,
-                        ry=ry,
-                        W=W,
-                        H=H,
-                        total=self.total_frames,
-                        state=self.state,
-                        animator=self.animator,
-                        colorer=self.colorer,
-                        args=self.args,
-                        pretty_cfg=self.pretty_cfg,
-                        use_zone=getattr(self.args, "use_zone", False),
-                        zone=None,
-                        zone_rect_roi=None,
-                        zone_rect_full=None,
-                        use_dual=use_dual,
-                        lineA_roi=lineA_roi,
-                        lineB_roi=lineB_roi,
-                        lineA_full=lineA_full,
-                        lineB_full=lineB_full,
-                        threaded_streaming=True,
-                        res=res,
-                    )
-                    last_full_disp = full_disp.copy()
-                except Exception:
-                    log.error("DISPLAY-WORKER", "compose_frames failed")
-                    log.debug("DISPLAY-WORKER", traceback.format_exc())
-                    try:
-                        fallback = (
-                            roi if roi is not None and hasattr(roi, "copy") else None
-                        )
-                        if fallback is None:
-                            fallback = 255 * np.ones(
-                                (int(rh or 240), int(rw or 320), 3), dtype=np.uint8
-                            )
-                        roi_disp = fallback
-                        full_disp = frame.copy() if frame is not None else fallback
-                    except Exception:
-                        roi_disp = 255 * np.ones((240, 320, 3), dtype=np.uint8)
-                        full_disp = roi_disp
-
-                # --- record to video first ---
-                try:
-                    if self.video_recorder is not None:
-                        self.video_recorder.write(full_disp)
-                except Exception:
-                    log.debug("DISPLAY-WORKER", "Video recording failed", exc_info=True)
-
-                # display / publish / handle UI events
-                try:
-                    default_roi_w = min(960, rw) if rw else 640
-                    default_roi_h = (
-                        int(default_roi_w * (rh / max(1, rw))) if rw else 480
-                    )
-                    default_full_w = min(960, W) if W else 640
-                    default_full_h = int(default_full_w * (H / max(1, W))) if W else 480
-
-                    shown_roi = None
-                    shown_full = None
-
-                    # Prefer WebRTC if available
-                    webrtc_server = None
-                    try:
-                        webrtc_server = self.injected.get("webrtc_server")
-                    except Exception:
-                        webrtc_server = None
-
-                    if webrtc_server is not None:
-                        # Push frame into WebRTC pipeline
-                        try:
-                            webrtc_server.publish(full_disp)
-                        except Exception:
-                            log.debug(
-                                "DISPLAY-WORKER",
-                                "WebRTC publish failed: " + traceback.format_exc(),
-                            )
-
-                        # Handle control commands from WebRTC client (/control -> queue)
-                        try:
-                            ctrl_q = self.injected.get("webrtc_control_q")
-                            if ctrl_q is not None:
-                                while True:
-                                    try:
-                                        cmd = ctrl_q.get_nowait()
-                                    except Exception:
-                                        break
-
-                                    try:
-                                        if (
-                                            isinstance(cmd, dict)
-                                            and cmd.get("cmd") == "screenshot"
-                                        ):
-                                            _save_screenshot(
-                                                full_disp,
-                                                getattr(self.args, "source", None),
-                                                getattr(feeder, "out_index", None),
-                                            )
-                                        elif (
-                                            isinstance(cmd, dict)
-                                            and cmd.get("cmd") == "quit"
-                                        ):
-                                            # Just signal stop; browser will see stream stop
-                                            self.stop_event.set()
-                                    except Exception:
-                                        log.debug(
-                                            "DISPLAY-WORKER",
-                                            "control cmd failed: "
-                                            + traceback.format_exc(),
-                                        )
-                        except Exception:
-                            log.debug(
-                                "DISPLAY-WORKER",
-                                "control queue handling failed: "
-                                + traceback.format_exc(),
-                            )
-
-                        # When using WebRTC, no cv2.imshow / waitKey
-                        continue
-
-                    # FALLBACK: original OpenCV windows
-                    if not self.args.no_roi:
-                        shown_roi = show_in_resizable_window(
-                            "ROI View",
-                            roi_disp,
-                            default_roi_w,
-                            default_roi_h,
-                            preserve_aspect=True,
-                        )
-                    if not self.args.no_full:
-                        shown_full = show_in_resizable_window(
-                            "Full View",
-                            full_disp,
-                            default_full_w,
-                            default_full_h,
-                            preserve_aspect=True,
-                        )
-
-                    key = cv2.waitKey(1) & 0xFF
-                    if key == ord("q"):
-                        self.stop_event.set()
-                        break
-                    elif key == ord("s"):
-                        try:
-                            _save_screenshot(
-                                last_full_disp,
-                                self.args.source,
-                                getattr(feeder, "out_index", None),
-                                self.args.run_root,
-                            )
-                        except Exception:
-                            log.debug(
-                                "DISPLAY-WORKER",
-                                "screenshot failed",
-                                exc_info=True,
-                            )
-
-                except Exception:
-                    log.error("DISPLAY-WORKER", "imshow/publish failed")
-                    log.debug("DISPLAY-WORKER", traceback.format_exc())
-
+                roi_disp = fallback
+                full_disp = frame.copy() if frame is not None else fallback
             except Exception:
-                log.error(
-                    "DISPLAY-WORKER",
-                    "Error processing display item: " + traceback.format_exc(),
-                )
-            finally:
-                # Balanced task_done: only call if queue supports it
-                try:
-                    if hasattr(self.result_queue, "task_done"):
-                        self.result_queue.task_done()
-                except Exception:
-                    pass
+                roi_disp = 255 * np.ones((240, 320, 3), dtype=np.uint8)
+                full_disp = roi_disp
+            return roi_disp, full_disp
 
-                # just before showing or immediately after (prefer after imshow+waitKey to measure when UI loop processed)
-                display_ts = time.monotonic()
-                # mark display_shown
-                try:
-                    frame_idx = res.get("frame_id") or getattr(
-                        feeder, "src_frame_idx", None
-                    )
-                    if hasattr(self, "injected") and self.injected.get("metrics"):
-                        self.injected["metrics"].mark(
-                            int(frame_idx or -1), "display_shown", ts=display_ts
+    def _record_video(self, full_disp):
+        """Write frame to video recorder if enabled."""
+        try:
+            if self.video_recorder is not None:
+                self.video_recorder.write(full_disp)
+        except Exception:
+            log.debug("DISPLAY-WORKER", "Video recording failed", exc_info=True)
+
+    def _handle_webrtc(self, full_disp, feeder):
+        """Publish WebRTC frames and handle control commands. Returns True if WebRTC used."""
+        webrtc_server = None
+        try:
+            webrtc_server = self.injected.get("webrtc_server")
+        except Exception:
+            webrtc_server = None
+
+        if webrtc_server is None:
+            return False
+
+        # Push frame into WebRTC pipeline
+        try:
+            webrtc_server.publish(full_disp)
+        except Exception:
+            log.debug(
+                "DISPLAY-WORKER",
+                "WebRTC publish failed: " + traceback.format_exc(),
+            )
+
+        # Handle control commands from WebRTC client (/control -> queue)
+        try:
+            ctrl_q = self.injected.get("webrtc_control_q")
+            if ctrl_q is not None:
+                while True:
+                    try:
+                        cmd = ctrl_q.get_nowait()
+                    except Exception:
+                        break
+
+                    try:
+                        if (
+                            isinstance(cmd, dict)
+                            and cmd.get("cmd") == "screenshot"
+                        ):
+                            _save_screenshot(
+                                full_disp,
+                                getattr(self.args, "source", None),
+                                getattr(feeder, "out_index", None),
+                            )
+                        elif (
+                            isinstance(cmd, dict)
+                            and cmd.get("cmd") == "quit"
+                        ):
+                            # Just signal stop; browser will see stream stop
+                            self.stop_event.set()
+                    except Exception:
+                        log.debug(
+                            "DISPLAY-WORKER",
+                            "control cmd failed: "
+                            + traceback.format_exc(),
                         )
-                except Exception:
-                    pass
+        except Exception:
+            log.debug(
+                "DISPLAY-WORKER",
+                "control queue handling failed: "
+                + traceback.format_exc(),
+            )
 
+        # When using WebRTC, no cv2.imshow / waitKey
+        return True
+
+    def _show_opencv_windows(self, roi_disp, full_disp, rw, rh, W, H):
+        """Display frames using OpenCV windows (fallback when WebRTC not used)."""
+        default_roi_w = min(960, rw) if rw else 640
+        default_roi_h = int(default_roi_w * (rh / max(1, rw))) if rw else 480
+        default_full_w = min(960, W) if W else 640
+        default_full_h = int(default_full_w * (H / max(1, W))) if W else 480
+
+        shown_roi = None
+        shown_full = None
+        if not self.args.no_roi:
+            shown_roi = show_in_resizable_window(
+                "ROI View",
+                roi_disp,
+                default_roi_w,
+                default_roi_h,
+                preserve_aspect=True,
+            )
+        if not self.args.no_full:
+            shown_full = show_in_resizable_window(
+                "Full View",
+                full_disp,
+                default_full_w,
+                default_full_h,
+                preserve_aspect=True,
+            )
+        return shown_roi, shown_full
+
+    def _handle_keyboard(self, last_full_disp, feeder):
+        """Handle keyboard input for OpenCV display mode."""
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
+            self.stop_event.set()
+            return True
+        elif key == ord("s"):
+            try:
+                _save_screenshot(
+                    last_full_disp,
+                    self.args.source,
+                    getattr(feeder, "out_index", None),
+                    self.args.run_root,
+                )
+            except Exception:
+                log.debug(
+                    "DISPLAY-WORKER",
+                    "screenshot failed",
+                    exc_info=True,
+                )
+        return False
+
+    def _mark_display_shown(self, res, feeder):
+        """Mark display_shown metric for this frame if enabled."""
+        display_ts = time.monotonic()
+        try:
+            frame_idx = res.get("frame_id") or getattr(feeder, "src_frame_idx", None)
+            if hasattr(self, "injected") and self.injected.get("metrics"):
+                self.injected["metrics"].mark(
+                    int(frame_idx or -1), "display_shown", ts=display_ts
+                )
+        except Exception:
+            pass
+
+    def _cleanup_after_loop(self):
+        """Cleanup windows, CSVs, and video recorder after thread loop exits."""
         try:
             cv2.destroyAllWindows()
         except Exception:
@@ -673,3 +680,122 @@ class DisplayWorker(threading.Thread):
                 self.video_recorder.close()
         except Exception:
             log.debug("DISPLAY-WORKER", "Failed to close video recorder", exc_info=True)
+
+    # ---------------- main run loop ----------------
+    def run(self):
+        log.info("DISPLAY-WORKER", "DisplayWorker started")
+        last_full_disp = None
+        while not self.stop_event.is_set():
+            try:
+                res = self.result_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+
+            try:
+                # stable field extraction
+                (
+                    frame,
+                    roi,
+                    feeder,
+                    frame_in,
+                    out_idx,
+                    dets,
+                ) = self._extract_result_fields(res)
+
+                if frame is None and roi is None:
+                    log.debug(
+                        "DISPLAY-WORKER", "Empty result (no frame and no roi); skipping"
+                    )
+                    continue
+
+                # ensure drawing/csvs/windows prepared + geometry/lines/dual setup
+                (
+                    rx,
+                    ry,
+                    rw,
+                    rh,
+                    W,
+                    H,
+                    lines_roi,
+                    lines_full,
+                    use_dual,
+                    dual_obj,
+                    lineA_roi,
+                    lineB_roi,
+                    lineA_full,
+                    lineB_full,
+                ) = self._prepare_frame_context(res, frame, roi)
+
+                # run counting/tracking logic (same as run_original)
+                fps = res.get("avg_fps", 0.0)
+                self._apply_counting(
+                    dets,
+                    feeder,
+                    fps,
+                    lines_roi,
+                    lines_full,
+                    use_dual,
+                    dual_obj,
+                    lineA_roi,
+                    lineA_full,
+                    lineB_roi,
+                    lineB_full,
+                )
+
+                # compose frames
+                roi_disp, full_disp = self._compose_display_frames(
+                    frame,
+                    roi,
+                    dets,
+                    feeder,
+                    rx,
+                    ry,
+                    rw,
+                    rh,
+                    W,
+                    H,
+                    lines_roi,
+                    lines_full,
+                    use_dual,
+                    lineA_roi,
+                    lineB_roi,
+                    lineA_full,
+                    lineB_full,
+                    res,
+                )
+                last_full_disp = full_disp.copy()
+
+                # --- record to video first ---
+                self._record_video(full_disp)
+
+                # display / publish / handle UI events
+                try:
+                    if self._handle_webrtc(full_disp, feeder):
+                        continue
+
+                    # FALLBACK: original OpenCV windows
+                    self._show_opencv_windows(roi_disp, full_disp, rw, rh, W, H)
+                    if self._handle_keyboard(last_full_disp, feeder):
+                        break
+
+                except Exception:
+                    log.error("DISPLAY-WORKER", "imshow/publish failed")
+                    log.debug("DISPLAY-WORKER", traceback.format_exc())
+
+            except Exception:
+                log.error(
+                    "DISPLAY-WORKER",
+                    "Error processing display item: " + traceback.format_exc(),
+                )
+            finally:
+                # Balanced task_done: only call if queue supports it
+                try:
+                    if hasattr(self.result_queue, "task_done"):
+                        self.result_queue.task_done()
+                except Exception:
+                    pass
+
+                # just before showing or immediately after (prefer after imshow+waitKey to measure when UI loop processed)
+                self._mark_display_shown(res, feeder)
+
+        self._cleanup_after_loop()
