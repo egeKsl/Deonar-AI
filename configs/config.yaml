@@ -68,7 +68,7 @@ paths:
   #   - weights resolves under models/
   #   - source  resolves under data/  (unless it looks like rtsp/http)
   weights: goat_yolo11n_img1024_bs16_lr0.0033_sgd_best.pt
-  source: cam1_D01_02m25s_08m03s.mp4
+  source: cam1_D01_1h08m50s_1h13m10s.mp4
 
 # ------------------------------
 # Inference (YOLO / Ultralytics)
@@ -81,10 +81,13 @@ inference:
   conf: 0.25
   iou: 0.45
 
+
 # ------------------------------
-# Tracking (ByteTrack)
+# Tracking (ByteTrack / BoT-SORT)
 # ------------------------------
 tracking:
+  tracker: bytetrack    # bytetrack | botsort
+
   bytetrack:
     profile: default    # default | crowd | very_crowd
     high: ~             # explicit override or null to use preset/default
@@ -94,6 +97,34 @@ tracking:
     buffer: ~
     min_area: ~
     mot20: false
+
+  botsort:
+    tracker_type: botsort
+    frame_rate: 25
+    mot20: false
+    model: auto
+
+    # Detection gating
+    track_high_thresh: 0.6
+    track_low_thresh: 0.1
+    new_track_thresh: 0.7
+
+    # Association
+    match_thresh: 0.8
+    fuse_score: true
+    proximity_thresh: 0.5
+
+    # Track lifecycle
+    track_buffer: 75
+    min_box_area: 80
+
+    # Re-ID
+    with_reid: true
+    reid_model: osnet_x0_25_msmt17.pt
+    appearance_thresh: 0.25
+
+    # Global Motion Compensation
+    gmc_method: sparseOptFlow
 
 # ------------------------------
 # Counting pipeline

@@ -17,7 +17,7 @@ from src.counting.counting_modes.counting_modes import (
 )
 from src.counting.counting_modes.init_counting_modes import _init_dual_lines, _init_zone
 
-from src.runtime_configs.bytetrack_cfg import make_bytetrack_yaml
+from src.runtime_configs.tracker_cfg import make_tracker_yaml
 
 from src.infer.yolo_infer import resolve_class_filter, track_once
 from src.infer.loader import load_model
@@ -106,7 +106,7 @@ def run_original(args):
     last_ts_sec_holder = [-1]
 
     # 10) Tracker config
-    tracker_yaml = make_bytetrack_yaml(args, fps)
+    tracker_yaml = make_tracker_yaml(args, fps)
 
     # 11) Zone object
     if use_zone and zone_rect_roi is not None:

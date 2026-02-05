@@ -22,7 +22,7 @@ import numpy as np
 from src.utils.logger import log
 from src.infer.yolo_infer import track_once
 from src.infer.loader import load_model_threaded, load_model as yolo_load_model
-from src.runtime_configs.bytetrack_cfg import make_bytetrack_yaml
+from src.runtime_configs.tracker_cfg import make_tracker_yaml
 from src.geometry.geom import _prepare_geometry, clamp_roi
 from src.utils.pacing_contract_dict import _ensure_item_dict
 
@@ -271,7 +271,13 @@ class InferenceWorker(threading.Thread):
 
         # tracker yaml
         try:
-            self.tracker_yaml = make_bytetrack_yaml(self.args)
+            # Tracker YAML selection (ByteTrack or BoT-SORT)
+            fps_hint = None
+            try:
+                fps_hint = float(self.cap_info.get("fps")) if self.cap_info else None
+            except Exception:
+                fps_hint = None
+            self.tracker_yaml = make_tracker_yaml(self.args, fps=fps_hint or 25)
         except Exception:
             self.tracker_yaml = None
 

@@ -478,6 +478,63 @@ def load_config(
     cfg["tracking"] = raw.get("tracking", {})
     # counting
     cfg["counting"] = raw.get("counting", {})
+    # tracking (tracker selector + BoT-SORT defaults)
+    tracking_cfg = (
+        cfg.get("tracking", {}) if isinstance(cfg.get("tracking", {}), dict) else {}
+    )
+    tracker_type = _as_choice(
+        tracking_cfg.get("tracker"),
+        ["bytetrack", "botsort"],
+        default="bytetrack",
+        name="tracker",
+    )
+    botsort_cfg = (
+        tracking_cfg.get("botsort", {})
+        if isinstance(tracking_cfg.get("botsort", {}), dict)
+        else {}
+    )
+    botsort_norm = {
+        "tracker_type": _as_choice(
+            botsort_cfg.get("tracker_type"),
+            ["botsort"],
+            default="botsort",
+            name="tracker_type",
+        ),
+        "frame_rate": _as_int(botsort_cfg.get("frame_rate"), 25, minv=1),
+        "mot20": _as_bool(botsort_cfg.get("mot20"), False),
+        "model": _as_str(botsort_cfg.get("model"), default="auto", allow_blank=False),
+        "track_high_thresh": _as_float(
+            botsort_cfg.get("track_high_thresh"), 0.6, minv=0.0, maxv=1.0
+        ),
+        "track_low_thresh": _as_float(
+            botsort_cfg.get("track_low_thresh"), 0.1, minv=0.0, maxv=1.0
+        ),
+        "new_track_thresh": _as_float(
+            botsort_cfg.get("new_track_thresh"), 0.7, minv=0.0, maxv=1.0
+        ),
+        "match_thresh": _as_float(
+            botsort_cfg.get("match_thresh"), 0.8, minv=0.0, maxv=1.0
+        ),
+        "fuse_score": _as_bool(botsort_cfg.get("fuse_score"), True),
+        "proximity_thresh": _as_float(
+            botsort_cfg.get("proximity_thresh"), 0.5, minv=0.0, maxv=1.0
+        ),
+        "track_buffer": _as_int(botsort_cfg.get("track_buffer"), 75, minv=1),
+        "min_box_area": _as_int(botsort_cfg.get("min_box_area"), 80, minv=0),
+        "with_reid": _as_bool(botsort_cfg.get("with_reid"), True),
+        "reid_model": _as_str(
+            botsort_cfg.get("reid_model"),
+            default="osnet_x0_25_msmt17.pt",
+            allow_blank=False,
+        ),
+        "appearance_thresh": _as_float(
+            botsort_cfg.get("appearance_thresh"), 0.25, minv=0.0, maxv=1.0
+        ),
+        "gmc_method": _as_str(
+            botsort_cfg.get("gmc_method"), default="sparseOptFlow", allow_blank=False
+        ),
+    }
+
     # viz
     cfg["viz"] = raw.get("viz", {})
     # debug
@@ -494,12 +551,26 @@ def load_config(
     # If dual profiles are defined, allow selecting one via counting.dual.profile
     # This merges the selected profile values into counting.dual before parsing.
     try:
-        counting_section = cfg.get("counting", {}) if isinstance(cfg.get("counting", {}), dict) else {}
-        dual_section = counting_section.get("dual", {}) if isinstance(counting_section.get("dual", {}), dict) else {}
+        counting_section = (
+            cfg.get("counting", {}) if isinstance(cfg.get("counting", {}), dict) else {}
+        )
+        dual_section = (
+            counting_section.get("dual", {})
+            if isinstance(counting_section.get("dual", {}), dict)
+            else {}
+        )
         if bool(dual_section.get("enabled", False)):
             profile_key = dual_section.get("profile")
-            profiles = dual_section.get("profiles", {}) if isinstance(dual_section.get("profiles", {}), dict) else {}
-            if profile_key and profile_key in profiles and isinstance(profiles[profile_key], dict):
+            profiles = (
+                dual_section.get("profiles", {})
+                if isinstance(dual_section.get("profiles", {}), dict)
+                else {}
+            )
+            if (
+                profile_key
+                and profile_key in profiles
+                and isinstance(profiles[profile_key], dict)
+            ):
                 # Merge selected profile into dual settings (profile values override base)
                 merged = dict(dual_section)
                 merged.update(profiles[profile_key])
@@ -542,7 +613,7 @@ def load_config(
     except Exception as e:
         log.error("CONFIG", f"Missing/invalid paths: {e}")
         raise
-    
+
     def _sanitize_name(s: str) -> str:
         return re.sub(r"[^a-zA-Z0-9._-]+", "_", s)
 
@@ -1082,9 +1153,7 @@ def load_config(
         else None
     )
     csv_metrics = (
-        _resolve_path(csv_metrics, str(run_root / "metrics"))
-        if csv_metrics
-        else None
+        _resolve_path(csv_metrics, str(run_root / "metrics")) if csv_metrics else None
     )
 
     # logging config
@@ -1241,9 +1310,7 @@ def load_config(
         default="mp4v",
     )
     video_path = (
-        _resolve_path(video_path, str(run_root / "video"))
-        if video_path
-        else None
+        _resolve_path(video_path, str(run_root / "video")) if video_path else None
     )
     overwrite_video = _as_bool(
         (output_video.get("overwrite")),
@@ -1287,7 +1354,14 @@ def load_config(
             "conf": conf,
             "iou": iou,
         },
-        "tracking": cfg.get("tracking", {}),
+        "tracking": (
+            lambda _t=cfg.get("tracking", {}): {
+                **(_t if isinstance(_t, dict) else {}),
+                "tracker": tracker_type,
+                "bytetrack": (_t.get("bytetrack", {}) if isinstance(_t, dict) else {}),
+                "botsort": botsort_norm,
+            }
+        )(),
         "counting": {
             "mode": count_mode,
             "line_roi_str": count_line_roi_str,
@@ -1378,6 +1452,11 @@ def load_config(
         if isinstance(CONFIG.get("tracking", {}), dict)
         else {}
     )
+    bs = (
+        CONFIG.get("tracking", {}).get("botsort", {})
+        if isinstance(CONFIG.get("tracking", {}), dict)
+        else {}
+    )
 
     ARGS = SimpleNamespace(
         # Required
@@ -1426,11 +1505,21 @@ def load_config(
         dual_min_nonzero_abs=CONFIG["counting"]["dual"]["min_nonzero_abs"],
         dual_min_nonzero_ratio=CONFIG["counting"]["dual"]["min_nonzero_ratio"],
         dual_motion_min_frames=CONFIG["counting"]["dual"]["motion_min_frames"],
-        dual_motion_min_displacement_px=CONFIG["counting"]["dual"]["motion_min_displacement_px"],
-        dual_motion_max_lookback_frames=CONFIG["counting"]["dual"]["motion_max_lookback_frames"],
-        dual_motion_dir_consistency_ratio=CONFIG["counting"]["dual"]["motion_dir_consistency_ratio"],
-        dual_motion_dir_consistency_min_frames=CONFIG["counting"]["dual"]["motion_dir_consistency_min_frames"],
-        dual_motion_axis_min_displacement_px=CONFIG["counting"]["dual"]["motion_axis_min_displacement_px"],
+        dual_motion_min_displacement_px=CONFIG["counting"]["dual"][
+            "motion_min_displacement_px"
+        ],
+        dual_motion_max_lookback_frames=CONFIG["counting"]["dual"][
+            "motion_max_lookback_frames"
+        ],
+        dual_motion_dir_consistency_ratio=CONFIG["counting"]["dual"][
+            "motion_dir_consistency_ratio"
+        ],
+        dual_motion_dir_consistency_min_frames=CONFIG["counting"]["dual"][
+            "motion_dir_consistency_min_frames"
+        ],
+        dual_motion_axis_min_displacement_px=CONFIG["counting"]["dual"][
+            "motion_axis_min_displacement_px"
+        ],
         # Viz
         viz_mode=CONFIG["viz"]["mode"],
         viz_crowd_switch=CONFIG["viz"]["crowd_switch"],
@@ -1461,6 +1550,8 @@ def load_config(
         csv_timeseries=CONFIG["csv"]["timeseries"],
         csv_decisions=CONFIG["csv"]["decisions"],
         csv_metrics=CONFIG["csv"]["metrics"],
+        # Tracker selector + flat overrides
+        tracker_type=CONFIG.get("tracking", {}).get("tracker", "bytetrack"),
         # ByteTrack flat overrides (legacy API)
         bt_profile=bt.get("profile", None),
         bt_high=bt.get("high", None),
@@ -1470,6 +1561,23 @@ def load_config(
         bt_buffer=bt.get("buffer", None),
         bt_min_area=bt.get("min_area", None),
         bt_mot20=bt.get("mot20", False),
+        # BoT-SORT flat overrides
+        bs_tracker_type=bs.get("tracker_type", "botsort"),
+        bs_frame_rate=bs.get("frame_rate", 25),
+        bs_mot20=bs.get("mot20", False),
+        bs_model=bs.get("model", "auto"),
+        bs_track_high_thresh=bs.get("track_high_thresh", 0.6),
+        bs_track_low_thresh=bs.get("track_low_thresh", 0.1),
+        bs_new_track_thresh=bs.get("new_track_thresh", 0.7),
+        bs_match_thresh=bs.get("match_thresh", 0.8),
+        bs_fuse_score=bs.get("fuse_score", True),
+        bs_proximity_thresh=bs.get("proximity_thresh", 0.5),
+        bs_track_buffer=bs.get("track_buffer", 75),
+        bs_min_box_area=bs.get("min_box_area", 80),
+        bs_with_reid=bs.get("with_reid", True),
+        bs_reid_model=bs.get("reid_model", "osnet_x0_25_msmt17.pt"),
+        bs_appearance_thresh=bs.get("appearance_thresh", 0.25),
+        bs_gmc_method=bs.get("gmc_method", "sparseOptFlow"),
         # Keep full tracking dict accessible too (modern API)
         tracking=CONFIG.get("tracking", {}),
         # Geometry / ROI (both tuple and flat values)
