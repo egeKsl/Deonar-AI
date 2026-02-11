@@ -30,7 +30,7 @@ geometry:
 # Runtime & I/O orchestration
 # ------------------------------
 runtime:
-  live: false                          # enable live processing (UI / WebRTC / output)
+  live: true                          # enable live processing (UI / WebRTC / output)
   quiet: false
   verbose: false
 
@@ -68,7 +68,7 @@ paths:
   #   - weights resolves under models/
   #   - source  resolves under data/  (unless it looks like rtsp/http)
   weights: goat_yolo11n_img1024_bs16_lr0.0033_sgd_best.pt
-  source: cam1_D01_1h08m50s_1h13m10s.mp4
+  source: rtsp://127.0.0.1:8554/mystream
 
 # ------------------------------
 # Inference (YOLO / Ultralytics)

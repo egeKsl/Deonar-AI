@@ -1,6 +1,5 @@
 # src/utils/metrics.py
 from __future__ import annotations
-from sys import exc_info
 import threading
 import time
 import collections
@@ -9,6 +8,7 @@ import csv
 from typing import Dict, Any, Optional
 import os
 import traceback
+import json
 
 
 class MetricsCollector:
@@ -25,6 +25,10 @@ class MetricsCollector:
         # Store events per frame_id: {frame_id: {event_name: (ts, extra)}}
         self._events: Dict[int, Dict[str, Any]] = {}
         self.counters = collections.Counter()
+        # Keep rolled-up latency samples so report() remains valid even after per-frame
+        # rows are flushed and removed from _events.
+        self._e2e_samples_ms = []
+        self._infer_samples_ms = []
 
         # --- 1) Normalize path (handles whitespace, slashes, yaml weirdness) ---
         try:
@@ -122,6 +126,11 @@ class MetricsCollector:
         d_ts = row.get("display_shown", {}).get("ts")
         e2e_ms = (d_ts - c_ts) * 1000.0 if c_ts and d_ts else None
         infer_ms = (i1_ts - i0_ts) * 1000.0 if i0_ts and i1_ts else None
+        with self.lock:
+            if e2e_ms is not None:
+                self._e2e_samples_ms.append(e2e_ms)
+            if infer_ms is not None:
+                self._infer_samples_ms.append(infer_ms)
 
         try:
             with self._csv_lock:
@@ -147,8 +156,10 @@ class MetricsCollector:
     def report(self):
         """Simple console report: compute p50/p90/p95 on E2E and infer."""
         events, counters = self.get_snapshot()
-        e2es = []
-        infers = []
+        with self.lock:
+            e2es = list(self._e2e_samples_ms)
+            infers = list(self._infer_samples_ms)
+        # Include still-pending rows that haven't been flushed yet.
         for _, ev in events.items():
             c = ev.get("captured", {}).get("ts")
             d = ev.get("display_shown", {}).get("ts")
@@ -184,3 +195,52 @@ class MetricsCollector:
             "samples_infer": len(infers),
         }
         return out
+
+    def _flush_pending_rows(self):
+        """Flush any still-buffered per-frame rows to CSV."""
+        with self.lock:
+            pending_ids = list(self._events.keys())
+        for fid in pending_ids:
+            self._flush_row(fid)
+
+    def _summary_json_path(self) -> str:
+        base, _ext = os.path.splitext(self.csv_path)
+        return f"{base}_summary.json"
+
+    def _write_summary_json(self, summary: dict):
+        out_path = self._summary_json_path()
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(summary, f, indent=2)
+            return out_path
+        except Exception:
+            return None
+
+    def close(self, flush: bool = True):
+        """
+        Finalize metrics collection.
+
+        - Optionally flush pending per-frame rows into CSV.
+        - Compute percentile summary.
+        - Print summary to console/log.
+        - Persist summary JSON next to metrics CSV.
+        """
+        if flush:
+            self._flush_pending_rows()
+
+        summary = self.report()
+        log.info(
+            "METRICS",
+            (
+                f"Latency summary: e2e p50/p90/p95="
+                f"{summary.get('e2e_p50')}/{summary.get('e2e_p90')}/{summary.get('e2e_p95')} ms | "
+                f"infer p50/p90/p95="
+                f"{summary.get('infer_p50')}/{summary.get('infer_p90')}/{summary.get('infer_p95')} ms | "
+                f"samples(e2e={summary.get('samples_e2e')}, infer={summary.get('samples_infer')})"
+            ),
+        )
+        out_path = self._write_summary_json(summary)
+        if out_path:
+            log.info("METRICS", f"Summary JSON written: {out_path}")
+        else:
+            log.warn("METRICS", "Failed to write metrics summary JSON")
