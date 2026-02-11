@@ -323,8 +323,12 @@ class PacingController:
             # successful put
             try:
                 if hasattr(self, "metrics") and self.metrics is not None:
-                    src_ts = self._get_source_ts(item)
-                    self.metrics.mark(int(item.get("frame_index", -1)), "pacer_emit", ts=src_ts)
+                    # Use monotonic runtime clock for stage timing consistency.
+                    self.metrics.mark(
+                        int(item.get("frame_index", -1)),
+                        "pacer_emit",
+                        ts=time.monotonic(),
+                    )
             except Exception:
                 pass
 
@@ -339,6 +343,16 @@ class PacingController:
             try:
                 self.out_q.put_nowait(item)
                 self.frames_emitted += 1
+                try:
+                    if hasattr(self, "metrics") and self.metrics is not None:
+                        # Emit mark for reinsertion path as well, so we do not undercount.
+                        self.metrics.mark(
+                            int(item.get("frame_index", -1)),
+                            "pacer_emit",
+                            ts=time.monotonic(),
+                        )
+                except Exception:
+                    pass
             except Exception:
                 log.warn("PACER", "Failed to reinsert frame after eviction.")
 

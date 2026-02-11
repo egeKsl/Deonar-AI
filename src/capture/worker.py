@@ -151,13 +151,14 @@ class ThreadedVideoCapture(threading.Thread):
             self.cap = None
             return False
 
-    def _put_drop_oldest(self, item: Dict[str, Any]) -> None:
+    def _put_drop_oldest(self, item: Dict[str, Any]) -> bool:
         """
         Put item(dict) into capture_queue using drop-oldest policy.
         Keep logging minimal (debug) to avoid flood.
         """
         try:
             self.capture_queue.put_nowait(item)
+            return True
         except queue.Full:
             try:
                 _ = self.capture_queue.get_nowait()
@@ -165,12 +166,14 @@ class ThreadedVideoCapture(threading.Thread):
                 pass
             try:
                 self.capture_queue.put_nowait(item)
+                return True
             except Exception:
                 # final fallback: give up on frame
                 log.debug(
                     "CAPTURE-THREAD",
                     f"Dropping frame {item.get('frame_index')} (queue full after drop attempt)",
                 )
+                return False
 
     # ---------- main loop ----------
     def run(self) -> None:
@@ -236,12 +239,12 @@ class ThreadedVideoCapture(threading.Thread):
             }
 
             # push into capture_queue using drop-oldest policy (non-blocking)
-            self._put_drop_oldest(item)
+            queued = self._put_drop_oldest(item)
             
-            # after you push item into queue, mark captured (if metrics provided)
+            # Mark captured only when the frame is actually accepted into the queue.
+            # This keeps stage counts aligned with downstream processing.
             try:
-                # assume runner injected metrics into global context? Better: pass metrics into ThreadedVideoCapture ctor.
-                if hasattr(self, "metrics") and self.metrics is not None:
+                if queued and hasattr(self, "metrics") and self.metrics is not None:
                     self.metrics.mark(int(self.frame_id), "captured", ts=ts)
             except Exception:
                 pass    

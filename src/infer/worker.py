@@ -354,7 +354,8 @@ class InferenceWorker(threading.Thread):
     def _mark_infer_start(self, frame_id):
         """Mark inference start in metrics (best-effort)."""
         if hasattr(self, "metrics") and self.metrics is not None:
-            self.metrics.mark(int(frame_id or -1), "infer_start")
+            # Use monotonic clock; infer_end uses the same base for valid deltas.
+            self.metrics.mark(int(frame_id or -1), "infer_start", ts=time.monotonic())
 
     def _ensure_initialized(self, frame) -> bool:
         """Ensure model and geometry are initialized inside the worker thread."""
@@ -497,8 +498,17 @@ class InferenceWorker(threading.Thread):
             self.metrics.mark(
                 int(frame_id or -1),
                 "infer_end",
-                ts=time.perf_counter(),
+                ts=time.monotonic(),
                 extra={"infer_wall_s": infer_time},
+            )
+
+    def _mark_result_queued(self, frame_id):
+        """Mark the point where inference output is accepted by result_queue."""
+        if hasattr(self, "metrics") and self.metrics is not None:
+            self.metrics.mark(
+                int(frame_id or -1),
+                "result_queued",
+                ts=time.monotonic(),
             )
 
     def _mark_result_dropped(self):
@@ -578,6 +588,8 @@ class InferenceWorker(threading.Thread):
                     self.out_index_counter += (
                         1  # Frame successfully processed and sent to result_queue
                     )
+                    # Keep ordering explicit: queue accepted first, then inference completed.
+                    self._mark_result_queued(frame_id)
                     self._mark_infer_end(frame_id, infer_time)
                 else:
                     self._mark_result_dropped()
