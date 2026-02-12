@@ -1,4 +1,4 @@
-# main file to start the application entry point
+﻿# main file to start the application entry point
 
 import sys, os
 import traceback
@@ -26,7 +26,10 @@ if __name__ == "__main__":
         )
         sys.exit(0)  # exit gracefully
     except FileNotFoundError:
-        log.error("MAIN-ERROR", "Configuration file 'configs/config.yaml' not found. Full traceback below:")
+        log.error(
+            "MAIN-ERROR",
+            "Configuration file 'configs/config.yaml' not found. Full traceback below:",
+        )
         traceback.print_exc()
         sys.exit(1)
     except Exception:
