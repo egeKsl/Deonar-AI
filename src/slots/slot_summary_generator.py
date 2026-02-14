@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from src.utils.logger import log
@@ -101,7 +101,7 @@ class SlotSummaryBuilder:
             direction_breakdown=dict(direction_breakdown),
             run_id=run_id,
             source=source,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc),
         )
 
 

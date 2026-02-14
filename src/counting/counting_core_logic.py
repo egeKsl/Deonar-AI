@@ -4,7 +4,7 @@ import math
 import numpy as np
 from src.utils.logger import log
 from src.geometry.geom import line_side
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def _side_sign(cx, cy, ax, ay, bx, by, margin_px):
@@ -269,7 +269,7 @@ def _update_counts_dual_for_frame(
                         slot_event = slot_mgr.on_global_count_event(
                             global_count=state.up_count + state.down_count,
                             direction=direction,
-                            timestamp=datetime.utcnow(),
+                            timestamp=datetime.now(timezone.utc),
                             track_id=tid,
                             proc_frame_idx=feeder.out_index,
                         )
@@ -424,7 +424,7 @@ def _update_counts_dual_for_frame(
                         slot_event = slot_mgr.on_global_count_event(
                             global_count=state.up_count + state.down_count,
                             direction=dirB,
-                            timestamp=datetime.utcnow(),
+                            timestamp=datetime.now(timezone.utc),
                             track_id=tid,
                             proc_frame_idx=feeder.out_index,
                         )

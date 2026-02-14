@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Callable
 
 from typing import Optional, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.slots.contracts import (
     SlotStartPayload,
@@ -287,7 +287,8 @@ class SlotManager:
             slot_id=self._active_slot.slot_id,
             stop_type="ABORTED",
             stopped_by="system",
-            timestamp=datetime.utcnow(),
+            # Keep shutdown/abort path timezone-aware and aligned with API paths.
+            timestamp=datetime.now(timezone.utc),
             reason="process_shutdown",
         )
 

@@ -2,7 +2,6 @@
 
 from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime
 
 
 # ----------------------------
@@ -20,7 +19,6 @@ class SlotStartRequest(BaseModel):
     vendor_name: Optional[str] = None
     declared_count: Optional[int] = Field(None, ge=0)
     started_by: str
-    timestamp: datetime
 
 
 # ----------------------------
@@ -36,7 +34,6 @@ class SlotStopRequest(BaseModel):
     slot_id: str
     stopped_by: str
     reason: Optional[str] = None
-    timestamp: datetime
 
 
 # ----------------------------

@@ -1,5 +1,6 @@
 # src/slots/api/routes.py
 
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from src.slots.api.schemas import (
     SlotStartRequest,
@@ -19,13 +20,16 @@ def create_slot_router(slot_manager):
     @router.post("/start", response_model=ApiResponse)
     def start_slot(req: SlotStartRequest):
         try:
+            # Use server-generated UTC timestamp to keep slot lifecycle timing
+            # consistent and avoid client timezone/clock drift issues.
+            server_ts = datetime.now(timezone.utc)
             payload = SlotStartPayload(
                 slot_id=req.slot_id,
                 vendor_id=req.vendor_id,
                 vendor_name=req.vendor_name,
                 declared_count=req.declared_count,
                 started_by=req.started_by,
-                timestamp=req.timestamp,
+                timestamp=server_ts,
             )
             slot_manager.start_slot(payload)
 
@@ -39,12 +43,15 @@ def create_slot_router(slot_manager):
     @router.post("/stop", response_model=ApiResponse)
     def stop_slot(req: SlotStopRequest):
         try:
+            # Use server-generated UTC timestamp to guarantee same timezone semantics
+            # as start timestamps and internal event timestamps.
+            server_ts = datetime.now(timezone.utc)
             payload = SlotStopPayload(
                 slot_id=req.slot_id,
                 stopped_by=req.stopped_by,
                 stop_type="COMPLETED",
                 reason=req.reason,
-                timestamp=req.timestamp,
+                timestamp=server_ts,
             )
             slot_manager.stop_slot(payload)
 
