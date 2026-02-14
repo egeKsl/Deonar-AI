@@ -119,6 +119,10 @@ class SlotManager:
         self._source = source
         self._get_global_count = global_count_supplier
 
+        # 🧠 lifecycle memory (NEW)
+        self._last_started_slot_id: Optional[str] = None
+        self._last_stopped_slot_id: Optional[str] = None
+
     # -----------------------------
     # Slot lifecycle
     # -----------------------------
@@ -126,11 +130,35 @@ class SlotManager:
         """
         Start a new slot.
 
-        Assumes:
-        - API layer has already validated double-start, permissions, etc.
+        Idempotency rules:
+        - Same slot_id while ACTIVE -> NO-OP
+        - Different slot_id while ACTIVE -> ERROR
+        - Restarting a previously stopped slot -> ERROR
         """
+
+        # -------------------------------------------------
+        # Idempotency: same slot already active
+        # -------------------------------------------------
         if self._active_slot is not None:
+            if payload.slot_id == self._active_slot.slot_id:
+                log.warn(
+                    "SLOT",
+                    f"Duplicate start ignored for active slot {payload.slot_id}",
+                )
+                raise RuntimeError("Duplicate start ignored for active slot")
             raise RuntimeError(f"Slot already active: {self._active_slot.slot_id}")
+
+        # -------------------------------------------------
+        # Lifecycle rule: cannot restart same slot ID
+        # -------------------------------------------------
+        if payload.slot_id == self._last_stopped_slot_id:
+            log.warn(
+                "SLOT",
+                f"Attempt to restart stopped slot {payload.slot_id} is not allowed",
+            )
+            raise RuntimeError(
+                f"Slot {payload.slot_id} was already stopped and cannot be restarted"
+            )
 
         log.info(
             "SLOT",
@@ -156,17 +184,39 @@ class SlotManager:
             vendor_name=payload.vendor_name,
         )
 
+        # remember lifecycle
+        self._last_started_slot_id = payload.slot_id
+
     def stop_slot(self, payload: SlotStopPayload) -> SlotRuntime:
         """
         Stop the currently active slot and finalize it.
 
-        Returns:
-            Frozen SlotRuntime instance.
+        Idempotency rules:
+        - Stopping same slot twice -> NO-OP
+        - Stopping when no slot active -> ERROR
         """
+
+        # -------------------------------------------------
+        # Idempotency: already stopped
+        # -------------------------------------------------
         if self._active_slot is None:
+            if payload.slot_id == self._last_stopped_slot_id:
+                log.warn(
+                    "SLOT",
+                    f"Duplicate stop ignored for slot {payload.slot_id}",
+                )
+                raise RuntimeError(f"Slot {payload.slot_id} already stopped")
             raise RuntimeError("No active slot to stop")
 
+        # -------------------------------------------------
+        # Strict slot match
+        # -------------------------------------------------
         if payload.slot_id != self._active_slot.slot_id:
+            log.warn(
+                "SLOT",
+                f"Slot ID mismatch on stop: active={self._active_slot.slot_id}, "
+                f"requested={payload.slot_id}",
+            )
             raise RuntimeError(
                 f"Slot ID mismatch: active={self._active_slot.slot_id}, "
                 f"requested={payload.slot_id}"
@@ -229,6 +279,7 @@ class SlotManager:
             f"(counted={slot.slot_count}, status={slot.status})",
         )
 
+        self._last_stopped_slot_id = slot.slot_id
         self._active_slot = None
         return slot
 
