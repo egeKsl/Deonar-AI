@@ -34,6 +34,13 @@ runtime:
   quiet: false
   verbose: false
 
+  # ---- SLOT MANAGEMENT ----
+  slots_enabled: true        # SINGLE source of truth
+
+  slot_api:
+    host: "127.0.0.1"
+    port: 8090
+
   # pacing / time-base
   sync: true                         # enable time-based pacing
   playback_speed: 1.0                # how fast to play relative to source
@@ -244,6 +251,7 @@ csv:
   timeseries: goat_counts_timeseries.csv
   decisions: goat_decisions.csv
   metrics: goat_metrics.csv
+  slots: slots/   # if enabled, also outputs per-slot CSVs under this folder (e.g. slots/slot1_events.csv)
 
 # ------------------------------
 # Logging (no separate 'live' here; uses runtime.live)

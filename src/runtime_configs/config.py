@@ -692,6 +692,24 @@ def load_config(
         run.get("verbose") if used_yaml else cfg.get("legacy_env", {}).get("VERBOSE"),
         False,
     )
+
+    # --------- Slots Manager knobs ---------
+    # runtime
+    slots_enabled = _as_bool(
+        (
+            run.get("slots_enabled")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("SLOTS_ENABLED")
+        ),
+        False,
+    )
+
+    slot_api_cfg = run.get("slot_api", {})
+    slot_api_host = _as_str(slot_api_cfg.get("host"), default="127.0.0.1")
+    slot_api_port = _as_int(
+        slot_api_cfg.get("port"), default=8090, minv=1024, maxv=65535
+    )
+
     runtime_sync = _as_bool(
         run.get("sync") if used_yaml else cfg.get("legacy_env", {}).get("SYNC"), True
     )
@@ -1139,6 +1157,15 @@ def load_config(
         default="goat_metrics.csv",
         allow_blank=True,
     )
+    csv_slots_dir = _as_str(
+        (
+            csvs.get("slots")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("CSV_SLOTS")
+        ),
+        default="slots/",
+        allow_blank=True,
+    )
     csv_events = (
         _resolve_path(csv_events, str(run_root / "events")) if csv_events else None
     )
@@ -1155,6 +1182,22 @@ def load_config(
     csv_metrics = (
         _resolve_path(csv_metrics, str(run_root / "metrics")) if csv_metrics else None
     )
+    if csv_slots_dir:
+        slots_dir_path = Path(str(csv_slots_dir))
+        # For slot outputs, relative paths are anchored to this run directory.
+        # Example: "slots/" -> <run_root>/slots/
+        if slots_dir_path.is_absolute():
+            csv_slots_dir = str(slots_dir_path)
+        else:
+            csv_slots_dir = str(run_root / slots_dir_path)
+    else:
+        if slots_enabled:
+            log.warn(
+                "CONFIG",
+                "runtime.slots_enabled=true but csv.slots is empty; "
+                "slot CSV/summary outputs may fail at runtime.",
+            )
+        csv_slots_dir = None
 
     # logging config
     logging_cfg = cfg.get("logging", {})
@@ -1324,6 +1367,11 @@ def load_config(
             "live": runtime_live,
             "quiet": runtime_quiet,
             "verbose": runtime_verbose,
+            "slots_enabled": slots_enabled,
+            "slot_api": {
+                "host": slot_api_host,
+                "port": slot_api_port,
+            },
             "sync": runtime_sync,
             "autoskip": runtime_autoskip,
             "max_lag_s": runtime_max_lag_s,
@@ -1418,6 +1466,9 @@ def load_config(
             "timeseries": csv_timeseries,
             "decisions": csv_decisions,
             "metrics": csv_metrics,
+            "slots_dir": csv_slots_dir,
+            # Backward-compat alias.
+            "slots": csv_slots_dir,
         },
         "logging": {
             "live": runtime_live,
@@ -1482,6 +1533,10 @@ def load_config(
         quiet=CONFIG["runtime"]["quiet"],
         verbose=CONFIG["runtime"]["verbose"],
         live=CONFIG["runtime"]["live"],
+        # slots
+        slots_enabled=CONFIG["runtime"]["slots_enabled"],
+        slot_api_host=CONFIG["runtime"]["slot_api"]["host"],
+        slot_api_port=CONFIG["runtime"]["slot_api"]["port"],
         save_out=CONFIG["runtime"]["save_out"],
         progress_every=CONFIG["runtime"]["progress_every"],
         cap_qsize=CONFIG["runtime"]["cap_qsize"],
@@ -1550,6 +1605,7 @@ def load_config(
         csv_timeseries=CONFIG["csv"]["timeseries"],
         csv_decisions=CONFIG["csv"]["decisions"],
         csv_metrics=CONFIG["csv"]["metrics"],
+        csv_slots_dir=CONFIG["csv"]["slots_dir"],
         # Tracker selector + flat overrides
         tracker_type=CONFIG.get("tracking", {}).get("tracker", "bytetrack"),
         # ByteTrack flat overrides (legacy API)

@@ -19,6 +19,9 @@ from src.viz.draw import (
 
 from src.utils.logger import log
 
+HUD_MODE_IDLE = "idle"
+HUD_MODE_SLOT = "slot_active"
+
 
 def _parse_bgr(s, fallback):
     try:
@@ -414,6 +417,8 @@ def _compose_frames(
     # contains queue/fps info. Otherwise, legacy display is used.
     threaded_streaming=False,
     res=None,
+    hud_mode=HUD_MODE_IDLE,
+    slot_hud=None,
 ):
     """
     Return (roi_disp, full_disp) with overlays. Draw zone OR lines.
@@ -493,7 +498,15 @@ def _compose_frames(
 
     # --- HUD for threaded streaming or legacy full HUD ------------------------
     try:
-        if threaded_streaming:
+        if hud_mode == HUD_MODE_SLOT and slot_hud:
+            # ---- SLOT ACTIVE HUD (MINIMAL, 3 LINES) ----
+            lines = [
+                f"SLOT: {slot_hud['slot_id']}  |  START: {slot_hud['slot_start'][:19].replace('T',' ')}",
+                f"COUNT: UP {slot_hud['up']}  DOWN {slot_hud['down']}  TOTAL {slot_hud['total']}",
+                f"FRAME: {getattr(feeder, 'frame_in', '?')}   FPS: {float(res.get('avg_fps', 0.0)):.1f}   TIME: {slot_hud['now']}",
+            ]
+            put_hud(full_disp, lines, org=(8, 32))
+        elif threaded_streaming:
             # prefer enhanced HUD when streaming threaded results
             hud_data = _build_hud_data(
                 feeder, state, res, threaded_streaming, args, W, H, rw, rh, total

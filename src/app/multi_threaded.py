@@ -14,6 +14,11 @@ from src.utils.logger import log
 from src.display.webrtc_server import WebRTCServer
 import queue as std_queue
 
+from src.slots.slot_manager import SlotManager
+from src.slots.api.server import start_slot_api_if_enabled
+
+from pathlib import Path
+
 
 # ===============================================================
 # 🧩 Helper Functions — Modularized from run_threaded()
@@ -106,6 +111,28 @@ def _wait_for_cap_info(capture, wait_timeout, poll_interval):
             f"cap_info not available after {wait_timeout}s — inference will infer geometry from first frame.",
         )
     return cap_info
+
+
+def _wait_for_vision_ready(display, timeout=5.0, poll=0.05) -> bool:
+    """
+    Block until DisplayWorker is alive and state is initialized.
+
+    This defines 'vision system READY'.
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            if (
+                display
+                and display.is_alive()
+                and hasattr(display, "state")
+                and display.state is not None
+            ):
+                return True
+        except Exception:
+            pass
+        time.sleep(poll)
+    return False
 
 
 def _prepare_injected_context(args, cap_info):
@@ -264,6 +291,7 @@ def _monitor_threads(
     pacer,
     infer,
     display,
+    slot_api,
     capture_queue,
     pacing_out_q,
     result_queue,
@@ -289,6 +317,7 @@ def _monitor_threads(
         "pacer": None,
         "infer": None,
         "display": None,
+        "slot_api": None,
     }
     # track whether we've already emitted an error for a dead thread (to avoid spam)
     error_reported = {
@@ -296,6 +325,7 @@ def _monitor_threads(
         "pacer": False,
         "infer": False,
         "display": False,
+        "slot_api": False,
     }
 
     last_monitor = 0.0
@@ -341,10 +371,14 @@ def _monitor_threads(
                             else False
                         )
 
+                    def is_slot_api_alive():
+                        return slot_api.is_alive() if slot_api else False
+
                     cap_alive = is_capture_alive()
                     pacer_alive = is_pacer_alive()
                     inf_alive = is_infer_alive()
                     disp_alive = is_disp_alive()
+                    slot_api_alive = is_slot_api_alive()
 
                     # Only log queue utilization every 5 seconds to avoid spamming
                     if now - last_queue_log >= 5.0:
@@ -456,6 +490,7 @@ def _monitor_threads(
                     check_and_report("pacer", pacer_alive)
                     check_and_report("infer", inf_alive)
                     check_and_report("display", disp_alive)
+                    check_and_report("slot_api", slot_api_alive)
                 except Exception as e:
                     log.error(
                         "RUNNER-MONITOR", f"Monitor error (collecting status): {e}"
@@ -559,7 +594,16 @@ def _monitor_threads(
 
 
 def _cleanup(
-    pacer, capture, infer, display, injected, injected_csvs, stop_event, metrics=None
+    pacer,
+    capture,
+    infer,
+    display,
+    slot_manager,
+    slot_api,
+    injected,
+    injected_csvs,
+    stop_event,
+    metrics=None,
 ):
     """
     Gracefully stop all threads and release resources.
@@ -608,6 +652,23 @@ def _cleanup(
         except Exception:
             log.debug("RUNNER", "Failed to close WebRTCServer", exc_info=True)
 
+    # --------------------------------------------------
+    # Slot cleanup (abort if active)
+    # --------------------------------------------------
+    if slot_manager and slot_manager.is_slot_active():
+        log.warn("SLOT", "Engine stopping with ACTIVE slot — aborting")
+
+        try:
+            slot_manager.abort_active_slot_if_any()
+        except Exception as e:
+            log.error("SLOT", f"Failed to abort active slot cleanly: {e}")
+
+    if slot_api:
+        try:
+            slot_api.stop()
+        except Exception as e:
+            log.debug("RUNNER", f"Failed to stop Slot API cleanly: {e}")
+
     log.info("RUNNER", "Threaded runner stopped")
 
 
@@ -630,6 +691,12 @@ def run_threaded(args):
 
     All logs are routed through src.utils.logger for colorized real-time feedback.
     """
+    # --------------------------------------------------
+    # 1) Core queues + stop signal
+    # --------------------------------------------------
+    # capture_queue: raw frames from capture thread
+    # pacing_out_q : paced frames for inference
+    # result_queue : inference outputs for display/counting
     cap_qsize = int(args.cap_qsize)
     res_qsize = int(args.res_qsize)
     capture_queue = queue.Queue(maxsize=cap_qsize)
@@ -637,6 +704,7 @@ def run_threaded(args):
     result_queue = queue.Queue(maxsize=res_qsize)
     stop_event = threading.Event()
 
+    # Prefer FFmpeg capture backend when OpenCV provides it.
     cap_backend = None
     try:
         import cv2 as _cv2
@@ -646,9 +714,13 @@ def run_threaded(args):
     except Exception:
         cap_backend = None
 
+    # --------------------------------------------------
+    # 2) Start capture + gather source metadata
+    # --------------------------------------------------
     src_final = _normalize_source(args)
     log.info("RUNNER", f"Starting threaded pipeline with source={src_final}")
 
+    # Shared metrics sink for threaded pipeline stages.
     metrics = MetricsCollector(
         csv_path=getattr(args, "csv_metrics", "outputs/metrics/metrics.csv")
     )
@@ -660,10 +732,16 @@ def run_threaded(args):
         float(getattr(args, "cap_info_wait_timeout", 6.0)),
         float(getattr(args, "cap_info_poll_interval", 0.05)),
     )
+
+    # --------------------------------------------------
+    # 3) Build injected context consumed by DisplayWorker
+    # --------------------------------------------------
     injected, injected_csvs = _prepare_injected_context(args, cap_info)
     injected["metrics"] = metrics
 
-    # create WebRTC server if requested
+    # --------------------------------------------------
+    # 4) Optional WebRTC surface for remote viewing/control
+    # --------------------------------------------------
     webrtc_server = None
     webrtc_control_q = None
     try:
@@ -694,6 +772,16 @@ def run_threaded(args):
     except Exception:
         log.error("RUNNER", "Failed to start WebRTCServer: " + traceback.format_exc())
 
+    # --------------------------------------------------
+    # Slot system initialization (LIVE only)
+    # --------------------------------------------------
+    slot_manager = None
+    slot_api = None
+    slots_enabled = bool(getattr(args, "slots_enabled", False))
+
+    # --------------------------------------------------
+    # 5) Start pacing + workers
+    # --------------------------------------------------
     runtime_cfg = _build_runtime_cfg(args)
     pacer = _create_and_start_pacer(
         capture_queue, pacing_out_q, runtime_cfg, metrics=metrics
@@ -708,11 +796,87 @@ def run_threaded(args):
         metrics=metrics,
     )
     _start_workers(infer, display)
+
+    # Live global count supplier used by SlotManager.
+    # Falls back to 0 if display state is not yet readable.
+    def get_global_count():
+        try:
+            return display.state.up_count + display.state.down_count
+        except Exception:
+            return 0
+
+    # --------------------------------------------------
+    # 6) Gate slot startup on vision readiness
+    # --------------------------------------------------
+    # SlotManager depends on live counts from DisplayWorker state;
+    # avoid starting slot control before display state is available.
+    vision_ready = _wait_for_vision_ready(display)
+    if not vision_ready:
+        log.error("RUNNER", "Vision system did not become ready — slots disabled")
+
+    if slots_enabled and vision_ready:
+        try:
+            if slots_enabled:
+                # Slots output directory is required when slot system is enabled.
+                slots_dir_raw = getattr(args, "csv_slots_dir", None)
+                if not slots_dir_raw:
+                    log.error(
+                        "RUNNER",
+                        "Slots enabled but slots directory is not configured "
+                        "(expected args.csv_slots_dir).",
+                    )
+                    raise ValueError("Missing slots output directory for slot system")
+
+                slot_manager = SlotManager(
+                    slots_dir=Path(slots_dir_raw),
+                    run_id=getattr(args, "run_id", None),
+                    source=getattr(args, "source", None),
+                    global_count_supplier=get_global_count,
+                )
+
+                # Slot API runtime config is intentionally minimal:
+                # host/port only; enablement is controlled by slots_enabled + vision_ready.
+                slot_api_cfg = {
+                    "runtime": {
+                        "slot_api": {
+                            "host": getattr(args, "slot_api_host", "127.0.0.1"),
+                            "port": int(getattr(args, "slot_api_port", 8090)),
+                        }
+                    }
+                }
+                slot_api = start_slot_api_if_enabled(slot_api_cfg, slot_manager)
+
+                if slot_api:
+                    log.info(
+                        "RUNNER",
+                        f"Slot API active at http://{slot_api.host}:{slot_api.port}",
+                    )
+                else:
+                    log.warn("RUNNER", "Slot API was enabled but did not start")
+
+                if slot_manager is not None:
+                    injected["slot_manager"] = slot_manager
+                    log.debug(
+                        "RUNNER",
+                        "SlotManager initialized and injected into DisplayWorker context",
+                    )
+            else:
+                log.info("RUNNER", "Slot system disabled (runtime.slots_enabled=false)")
+        except Exception as e:
+            log.error("RUNNER", f"Failed to initialize Slot system: {e}")
+
+    if webrtc_server and slot_manager:
+        webrtc_server._slot_manager = slot_manager  # inject slot manager reference for WebRTCServer's /health endpoint
+
+    # --------------------------------------------------
+    # 7) Monitor + graceful teardown
+    # --------------------------------------------------
     pacer, infer = _monitor_threads(
         capture,
         pacer,
         infer,
         display,
+        slot_api,
         capture_queue,
         pacing_out_q,
         result_queue,
@@ -725,9 +889,12 @@ def run_threaded(args):
         capture,
         infer,
         display,
+        slot_manager,
+        slot_api,
         injected,
         injected_csvs,
         stop_event,
         metrics=metrics,
     )
+
     log.info("RUNNER", "Threaded pipeline execution complete.")

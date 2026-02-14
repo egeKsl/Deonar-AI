@@ -548,7 +548,6 @@ class WebRTCServer:
             {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
         )
 
-
     async def _control_handler(self, request: web.Request):
         """
         Lightweight control endpoint.
@@ -578,6 +577,9 @@ class WebRTCServer:
                 "peers": len(self._pcs),
                 "frame_queues": len(self._frame_queues),
             }
+            slot_mgr = getattr(request.app.get("slot_manager", None), None)
+            if slot_mgr and slot_mgr.is_slot_active():
+                info["slot"] = slot_mgr.get_active_slot_snapshot()
             return web.json_response(info)
         except Exception:
             return web.json_response({"ok": False, "error": "health_failed"})

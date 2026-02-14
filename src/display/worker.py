@@ -24,7 +24,7 @@ import traceback
 from typing import Tuple, Optional
 
 import numpy as np
-from scipy import stats
+from datetime import datetime
 
 from src.utils.logger import log
 from src.display.drawing import (
@@ -42,7 +42,6 @@ from src.counting.counting_modes.counting_modes import (
     process_frame_line,
 )
 from src.counting.state import _init_count_state
-import os
 from src.utils.video_recorder import VideoRecorder
 
 
@@ -187,6 +186,33 @@ class DisplayWorker(threading.Thread):
             )
         else:
             log.debug("DISPLAY-WORKER", "Video recording disabled")
+            
+    def _build_slot_hud_data(self):
+        """
+        Build minimal HUD data when a slot is ACTIVE.
+        """
+        slot_mgr = self.injected.get("slot_manager")
+        if not slot_mgr:
+            return None
+
+        snap = slot_mgr.get_active_slot_snapshot()
+        if not snap:
+            return None
+
+        now = datetime.now()
+
+        return {
+            "mode": "slot_active",
+            "slot_id": snap["slot_id"],
+            "slot_start": snap["start_time"],  # already ISO
+            "up": snap["direction_breakdown"].get("up", 0),
+            "down": snap["direction_breakdown"].get("down", 0),
+            "total": snap["slot_count"],
+            "frame": getattr(self.state, "frame_in", None),
+            "fps": None,  # filled later from res
+            "now": now.strftime("%H:%M:%S"),
+        }
+
 
     # ---------------- drawing context ----------------
     def _ensure_drawing(self, sample_frame):
@@ -383,7 +409,22 @@ class DisplayWorker(threading.Thread):
         use_dual, dual_obj, lineA_roi, lineB_roi, lineA_full, lineB_full = (
             self._ensure_dual(rx, ry, rw, rh)
         )
-        return rx, ry, rw, rh, W, H, lines_roi, lines_full, use_dual, dual_obj, lineA_roi, lineB_roi, lineA_full, lineB_full
+        return (
+            rx,
+            ry,
+            rw,
+            rh,
+            W,
+            H,
+            lines_roi,
+            lines_full,
+            use_dual,
+            dual_obj,
+            lineA_roi,
+            lineB_roi,
+            lineA_full,
+            lineB_full,
+        )
 
     def _apply_counting(
         self,
@@ -414,19 +455,24 @@ class DisplayWorker(threading.Thread):
                 )
             elif use_dual and dual_obj is not None:
                 process_frame_dual(
-                    dets,
-                    dual_obj,
-                    feeder,
-                    fps,
-                    self.args,
-                    self.state,
-                    self.csvs,
-                    self.colorer,
-                    self.animator,
-                    lineA_roi,
-                    lineA_full,
-                    lineB_roi,
-                    lineB_full,
+                    dets=dets,
+                    dual=dual_obj,
+                    feeder=feeder,
+                    fps=fps,
+                    args=self.args,
+                    state=self.state,
+                    csvs=self.csvs,
+                    colorer=self.colorer,
+                    animator=self.animator,
+                    lineA_roi=lineA_roi,
+                    lineA_full=lineA_full,
+                    lineB_roi=lineB_roi,
+                    lineB_full=lineB_full,
+                    slot_mgr=(
+                        self.injected.get("slot_manager", None)
+                        if self.injected
+                        else None
+                    ),
                 )
             else:
                 process_frame_line(
@@ -467,6 +513,8 @@ class DisplayWorker(threading.Thread):
         lineA_full,
         lineB_full,
         res,
+        hud_mode,
+        slot_hud,
     ):
         """Compose ROI and full display frames with overlays."""
         try:
@@ -508,6 +556,8 @@ class DisplayWorker(threading.Thread):
                 lineB_full=lineB_full,
                 threaded_streaming=True,
                 res=res,
+                hud_mode=hud_mode,
+                slot_hud=slot_hud,
             )
             return roi_disp, full_disp
         except Exception:
@@ -565,32 +615,24 @@ class DisplayWorker(threading.Thread):
                         break
 
                     try:
-                        if (
-                            isinstance(cmd, dict)
-                            and cmd.get("cmd") == "screenshot"
-                        ):
+                        if isinstance(cmd, dict) and cmd.get("cmd") == "screenshot":
                             _save_screenshot(
                                 full_disp,
                                 getattr(self.args, "source", None),
                                 getattr(feeder, "out_index", None),
                             )
-                        elif (
-                            isinstance(cmd, dict)
-                            and cmd.get("cmd") == "quit"
-                        ):
+                        elif isinstance(cmd, dict) and cmd.get("cmd") == "quit":
                             # Just signal stop; browser will see stream stop
                             self.stop_event.set()
                     except Exception:
                         log.debug(
                             "DISPLAY-WORKER",
-                            "control cmd failed: "
-                            + traceback.format_exc(),
+                            "control cmd failed: " + traceback.format_exc(),
                         )
         except Exception:
             log.debug(
                 "DISPLAY-WORKER",
-                "control queue handling failed: "
-                + traceback.format_exc(),
+                "control queue handling failed: " + traceback.format_exc(),
             )
 
         # When using WebRTC, no cv2.imshow / waitKey
@@ -741,6 +783,17 @@ class DisplayWorker(threading.Thread):
                     lineB_roi,
                     lineB_full,
                 )
+                
+                # Decide HUD mode
+                slot_mgr = self.injected.get("slot_manager")
+                slot_hud = None
+                hud_mode = "idle"
+
+                if slot_mgr and slot_mgr.is_slot_active():
+                    slot_hud = self._build_slot_hud_data()
+                    if slot_hud:
+                        hud_mode = "slot_active"
+
 
                 # compose frames
                 roi_disp, full_disp = self._compose_display_frames(
@@ -762,6 +815,8 @@ class DisplayWorker(threading.Thread):
                     lineA_full,
                     lineB_full,
                     res,
+                    hud_mode,
+                    slot_hud,
                 )
                 last_full_disp = full_disp.copy()
 
