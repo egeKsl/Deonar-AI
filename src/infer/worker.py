@@ -75,7 +75,7 @@ class InferenceWorker(threading.Thread):
     Important behavior notes:
       - Heavy initialization (model loading, tracker YAML, ROI computation) is deferred
         to _init(sample_frame) and executed inside the thread to avoid import-time work.
-      - Results use a stable contract (keys include: frame_id, timestamp, frame, roi, dets, feeder, avg_fps, queue stats).
+      - Results use a stable contract (keys include: frame_id, timestamp, frame, roi, dets, feeder, infer_fps, queue stats).
       - Uses a small FPS rolling buffer for infer FPS smoothing.
     """
 
@@ -465,7 +465,8 @@ class InferenceWorker(threading.Thread):
             "feeder": feeder,
             "frame_in_counter": self.frame_in_counter,
             "out_index_counter": self.out_index_counter,
-            "avg_fps": (
+            # Smoothed inference throughput (model-side), not end-to-end display FPS.
+            "infer_fps": (
                 (sum(self._fps_buf) / len(self._fps_buf))
                 if len(self._fps_buf) > 0
                 else 0.0

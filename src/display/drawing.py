@@ -342,10 +342,16 @@ def _build_hud_data(feeder, state, res, threaded_streaming, args, W, H, rw, rh, 
         hud_data["up"] = getattr(state, "up_count", 0)
         hud_data["down"] = getattr(state, "down_count", 0)
         hud_data["total"] = hud_data["up"] + hud_data["down"]
-        hud_data["frame"] = int(getattr(feeder, "frame_in", 0))
+        hud_data["frame_in"] = int(getattr(feeder, "frame_in", 0))
+        hud_data["out_index"] = int(getattr(feeder, "out_index", 0))
         # try from res first (in threaded mode display gets res from infer)
         if threaded_streaming and isinstance(res, dict):
-            hud_data["fps"] = float(res.get("avg_fps", 0.0))
+            hud_data["infer_fps"] = float(
+                res.get("infer_fps", res.get("avg_fps", 0.0)) or 0.0
+            )
+            hud_data["e2e_fps"] = float(res.get("e2e_fps", 0.0) or 0.0)
+            # Keep legacy `fps` key for backward compatibility in any custom HUD renderer.
+            hud_data["fps"] = hud_data["infer_fps"]
             hud_data["pacing_out_q_fill"] = int(res.get("pacing_out_q_fill", 0) or 0)
             hud_data["res_q_fill"] = int(res.get("result_q_fill", 0) or 0)
             hud_data["pacing_out_q_max"] = int(
@@ -355,7 +361,13 @@ def _build_hud_data(feeder, state, res, threaded_streaming, args, W, H, rw, rh, 
                 res.get("result_q_max", getattr(args, "res_qsize", 0) or 0) or 0
             )
         else:
-            hud_data["fps"] = float(getattr(feeder, "avg_fps", 0.0) or 0.0)
+            hud_data["infer_fps"] = float(getattr(feeder, "infer_fps", 0.0) or 0.0)
+            hud_data["e2e_fps"] = float(getattr(feeder, "e2e_fps", 0.0) or 0.0)
+            hud_data["fps"] = (
+                hud_data["infer_fps"]
+                if hud_data["infer_fps"] > 0.0
+                else float(getattr(feeder, "avg_fps", 0.0) or 0.0)
+            )
             hud_data["pacing_out_q_fill"] = int(
                 getattr(feeder, "pacing_out_qsize", 0) or 0
             )
@@ -371,7 +383,10 @@ def _build_hud_data(feeder, state, res, threaded_streaming, args, W, H, rw, rh, 
             "up": getattr(state, "up_count", 0),
             "down": getattr(state, "down_count", 0),
             "total": getattr(state, "up_count", 0) + getattr(state, "down_count", 0),
-            "frame": int(getattr(feeder, "frame_in", 0)),
+            "frame_in": int(getattr(feeder, "frame_in", 0)),
+            "out_index": int(getattr(feeder, "out_index", 0)),
+            "infer_fps": 0.0,
+            "e2e_fps": 0.0,
             "fps": 0.0,
             "res": f"{int(W)}x{int(H)}",
             "cap_q": 0,
@@ -503,7 +518,7 @@ def _compose_frames(
             lines = [
                 f"SLOT: {slot_hud['slot_id']}  |  START: {slot_hud['slot_start'][:19].replace('T',' ')}",
                 f"COUNT: UP {slot_hud['up']}  DOWN {slot_hud['down']}  TOTAL {slot_hud['total']}",
-                f"FRAME: {getattr(feeder, 'frame_in', '?')}   FPS: {float(res.get('avg_fps', 0.0)):.1f}   TIME: {slot_hud['now']}",
+                f"FRAME: {getattr(feeder, 'frame_in', '?')}/{getattr(feeder, 'out_index', '?')}   FPS: {float(res.get('infer_fps', res.get('avg_fps', 0.0))):.1f}/{float(res.get('e2e_fps', 0.0)):.1f}   TIME: {slot_hud['now']}",
             ]
             put_hud(full_disp, lines, org=(8, 32))
         elif threaded_streaming:

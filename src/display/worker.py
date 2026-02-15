@@ -21,6 +21,7 @@ import queue
 import time
 import cv2
 import traceback
+from collections import deque
 from typing import Tuple, Optional
 
 import numpy as np
@@ -158,6 +159,11 @@ class DisplayWorker(threading.Thread):
 
         # windows setup guard
         self._windows_setup = False
+
+        # Smoothed end-to-end FPS measured at display stage.
+        # This is independent of inference FPS and reflects delivery-to-display cadence.
+        self._last_display_ts = None
+        self._e2e_fps_buf = deque(maxlen=16)
 
         # --- new: video recorder config ---
         record_video = bool(getattr(self.args, "record_video", False))
@@ -699,6 +705,23 @@ class DisplayWorker(threading.Thread):
         except Exception:
             pass
 
+    def _update_e2e_fps(self) -> float:
+        """
+        Update smoothed end-to-end FPS using display cadence.
+
+        The measurement is based on time delta between consecutive processed display frames
+        (queue->display path), so it represents practical throughput seen by operators.
+        """
+        now = time.monotonic()
+        if self._last_display_ts is not None:
+            dt = now - self._last_display_ts
+            if dt > 0:
+                self._e2e_fps_buf.append(1.0 / dt)
+        self._last_display_ts = now
+        if len(self._e2e_fps_buf) == 0:
+            return 0.0
+        return float(sum(self._e2e_fps_buf) / len(self._e2e_fps_buf))
+
     def _cleanup_after_loop(self):
         """Cleanup windows, CSVs, and video recorder after thread loop exits."""
         try:
@@ -769,11 +792,17 @@ class DisplayWorker(threading.Thread):
                 ) = self._prepare_frame_context(res, frame, roi)
 
                 # run counting/tracking logic (same as run_original)
-                fps = res.get("avg_fps", 0.0)
+                infer_fps = float(
+                    res.get("infer_fps", res.get("avg_fps", 0.0)) or 0.0
+                )
+                e2e_fps = self._update_e2e_fps()
+                # Enrich payload for downstream HUD renderers.
+                res["infer_fps"] = infer_fps
+                res["e2e_fps"] = e2e_fps
                 self._apply_counting(
                     dets,
                     feeder,
-                    fps,
+                    infer_fps,
                     lines_roi,
                     lines_full,
                     use_dual,

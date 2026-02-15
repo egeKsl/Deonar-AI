@@ -69,7 +69,9 @@ def put_hud_enhanced(
         return
     H, W = img.shape[:2]
     count_line = f"COUNT:  UP {hud.get('up',0)}   DOWN {hud.get('down',0)}   TOTAL: {hud.get('total',0)}"
-    frame_line = f"FRAMES: {hud.get('frame',0)}   SOURCE: {hud.get('res','?')}   FPS: {float(hud.get('fps',0.0)):.1f}"
+    infer_fps = float(hud.get("infer_fps", hud.get("fps", 0.0)) or 0.0)
+    e2e_fps = float(hud.get("e2e_fps", 0.0) or 0.0)
+    frame_line = f"FRAMES: {hud.get('frame_in',0)}/{hud.get('out_index',0)}   SOURCE: {hud.get('res','?')}   FPS: {infer_fps:.1f}/{e2e_fps:.1f}"
     q_line = f"PACING_Q: {hud.get('pacing_out_q_fill',0)}/{hud.get('pacing_out_q_max',0)}   RES_Q: {hud.get('res_q_fill',0)}/{hud.get('res_q_max',0)}"
     lines = [count_line, frame_line, q_line]
     base_x, base_y = org
