@@ -514,13 +514,36 @@ def _compose_frames(
     # --- HUD for threaded streaming or legacy full HUD ------------------------
     try:
         if hud_mode == HUD_MODE_SLOT and slot_hud:
-            # ---- SLOT ACTIVE HUD (MINIMAL, 3 LINES) ----
-            lines = [
-                f"SLOT: {slot_hud['slot_id']}  |  START: {slot_hud['slot_start'][:19].replace('T',' ')}",
-                f"COUNT: UP {slot_hud['up']}  DOWN {slot_hud['down']}  TOTAL {slot_hud['total']}",
-                f"FRAME: {getattr(feeder, 'frame_in', '?')}/{getattr(feeder, 'out_index', '?')}   FPS: {float(res.get('infer_fps', res.get('avg_fps', 0.0))):.1f}/{float(res.get('e2e_fps', 0.0)):.1f}   TIME: {slot_hud['now']}",
+            # ---- SLOT ACTIVE HUD (ENHANCED CARD) ----
+            infer_fps = float(res.get("infer_fps", res.get("avg_fps", 0.0)) or 0.0)
+            e2e_fps = float(res.get("e2e_fps", 0.0) or 0.0)
+            slot_start = str(slot_hud.get("slot_start", ""))
+            slot_start = slot_start[:19].replace("T", " ") if slot_start else "-"
+
+            rows = [
+                ("SLOT", str(slot_hud.get("slot_id", "-")), (65, 210, 170)),
+                ("START", slot_start, (80, 170, 245)),
+                (
+                    "COUNT",
+                    f"UP {int(slot_hud.get('up', 0))}  DOWN {int(slot_hud.get('down', 0))}  TOTAL {int(slot_hud.get('total', 0))}",
+                    (80, 215, 120),
+                ),
+                (
+                    "STREAM",
+                    f"FRAME {getattr(feeder, 'frame_in', '?')}/{getattr(feeder, 'out_index', '?')}  FPS {infer_fps:.1f}/{e2e_fps:.1f}",
+                    (120, 205, 255),
+                ),
+                ("TIME", str(slot_hud.get("now", "-")), (255, 195, 120)),
             ]
-            put_hud(full_disp, lines, org=(8, 32))
+
+            try:
+                from src.viz.draw import put_hud_slot_enhanced
+
+                put_hud_slot_enhanced(full_disp, rows, org=(10, 30))
+            except Exception:
+                # Fallback text HUD if enhanced renderer is unavailable.
+                lines = [f"{k}: {v}" for k, v, _ in rows]
+                put_hud(full_disp, lines, org=(8, 32))
         elif threaded_streaming:
             # prefer enhanced HUD when streaming threaded results
             hud_data = _build_hud_data(

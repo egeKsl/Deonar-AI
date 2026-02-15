@@ -8,7 +8,13 @@ from ._shapes import (
     draw_dashed_line,
     _rounded_rect,
 )
-from ._labels import _label_chip, put_hud, put_hud_enhanced, draw_zone_rect
+from ._labels import (
+    _label_chip,
+    put_hud,
+    put_hud_enhanced,
+    put_hud_slot_enhanced,
+    draw_zone_rect,
+)
 from .pretty import (
     PrettyDrawConfig,
     draw_box_pretty,
@@ -30,6 +36,7 @@ __all__ = [
     "_label_chip",
     "put_hud",
     "put_hud_enhanced",
+    "put_hud_slot_enhanced",
     "draw_zone_rect",
     "PrettyDrawConfig",
     "draw_box_pretty",

@@ -168,6 +168,164 @@ def put_hud_enhanced(
     return
 
 
+def put_hud_slot_enhanced(
+    img,
+    rows,
+    org=(18, 28),
+    font_scale=0.60,
+    thickness=1,
+    line_spacing=30,
+    radius=14,
+    alpha=0.78,
+):
+    """
+    GOD-LEVEL slot HUD card with strong contrast, glow bullets, hierarchy, and accent strip.
+
+    Args:
+        img: target frame (BGR).
+        rows: list of (key, value, accent_bgr).
+        org: top-left position.
+    """
+    if img is None or not isinstance(img, np.ndarray) or not rows:
+        return
+
+    H, W = img.shape[:2]
+    x1, y1 = max(8, int(org[0])), max(8, int(org[1]))
+    pad_x, pad_y = 16, 14
+    bullet_r = 4
+    bullet_gap = 12
+
+    # ---------------------------
+    # Measure text
+    # ---------------------------
+    key_sizes = [
+        cv2.getTextSize(f"{k}:", cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness + 1)[0]
+        for k, _, _ in rows
+    ]
+    val_sizes = [
+        cv2.getTextSize(v, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+        for _, v, _ in rows
+    ]
+
+    key_w = max((s[0] for s in key_sizes), default=0)
+    row_w = max((k[0] + v[0] for k, v in zip(key_sizes, val_sizes)), default=0)
+
+    box_w = min(W - x1 - 8, row_w + pad_x * 2 + bullet_r * 2 + bullet_gap + 26)
+    box_h = min(H - y1 - 8, int(len(rows) * line_spacing + pad_y * 2))
+
+    x2, y2 = x1 + max(240, box_w), y1 + max(120, box_h)
+
+    # ---------------------------
+    # Background card (dark & dominant)
+    # ---------------------------
+    overlay = img.copy()
+    _rounded_rect(
+        overlay,
+        (x1, y1),
+        (x2, y2),
+        (10, 12, 14),  # near-black neutral
+        radius=radius,
+        thickness=-1,
+    )
+    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+
+    # Border
+    _rounded_rect(
+        img,
+        (x1, y1),
+        (x2, y2),
+        (90, 100, 110),
+        radius=radius,
+        thickness=1,
+    )
+
+    # ---------------------------
+    # Top accent strip (system identity)
+    # ---------------------------
+    cv2.rectangle(
+        img,
+        (x1 + radius, y1),
+        (x2 - radius, y1 + 4),
+        (60, 180, 255),  # cyan system accent
+        -1,
+    )
+
+    # ---------------------------
+    # Typography colors
+    # ---------------------------
+    key_color = (170, 180, 190)
+    value_color = (245, 248, 252)
+    shadow = (0, 0, 0)
+
+    ty = y1 + pad_y + 18
+
+    # ---------------------------
+    # Rows
+    # ---------------------------
+    for key, value, accent in rows:
+        by = ty - 6
+        bx = x1 + pad_x + bullet_r
+
+        # --- Glow ring (outer)
+        cv2.circle(img, (bx, by), bullet_r + 4, accent, 1, cv2.LINE_AA)
+        cv2.circle(img, (bx, by), bullet_r + 2, accent, 1, cv2.LINE_AA)
+
+        # --- Bullet core
+        cv2.circle(img, (bx, by), bullet_r, accent, -1, cv2.LINE_AA)
+        cv2.circle(img, (bx, by), bullet_r + 1, (0, 0, 0), 1, cv2.LINE_AA)
+
+        # Text positions
+        key_text = f"{key}:"
+        kx = x1 + pad_x + bullet_r * 2 + bullet_gap
+        vx = kx + key_w + 10
+
+        # --- Key (bold, priority)
+        cv2.putText(
+            img,
+            key_text,
+            (kx + 2, ty + 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            shadow,
+            thickness + 2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            img,
+            key_text,
+            (kx, ty),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            key_color,
+            thickness + 1,
+            cv2.LINE_AA,
+        )
+
+        # --- Value (secondary)
+        cv2.putText(
+            img,
+            value,
+            (vx + 2, ty + 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            shadow,
+            thickness + 1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            img,
+            value,
+            (vx, ty),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            value_color,
+            thickness,
+            cv2.LINE_AA,
+        )
+
+        ty += line_spacing
+
+
 def draw_zone_rect(
     img,
     rect_xyxy,
