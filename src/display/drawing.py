@@ -539,7 +539,7 @@ def _compose_frames(
             try:
                 from src.viz.draw import put_hud_slot_enhanced
 
-                put_hud_slot_enhanced(full_disp, rows, org=(10, 30))
+                put_hud_slot_enhanced(full_disp, rows, org=(14, 28), align="top-right")
             except Exception:
                 # Fallback text HUD if enhanced renderer is unavailable.
                 lines = [f"{k}: {v}" for k, v, _ in rows]
