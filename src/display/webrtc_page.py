@@ -102,7 +102,7 @@ def build_webrtc_index_html() -> str:
     border-radius: 6px;
     box-shadow: 0 6px 16px rgba(0,0,0,0.6);
     font-size: 14px;
-    transition: opacity 0.2s ease, filter 0.2s ease, border-color 0.2s ease;
+    transition: opacity 0.4s ease, filter 0.4s ease, border-color 0.4s ease, transform 0.3s ease;
     }
 
     .slot-card.hidden {
@@ -113,6 +113,12 @@ def build_webrtc_index_html() -> str:
     border-left-color: #8a8a8a;
     opacity: 0.72;
     filter: saturate(0.8);
+    transform: scale(0.995);
+    }
+    
+    .slot-card:not(.inactive) {
+      box-shadow: 0 0 0 1px rgba(29,223,139,0.25),
+                  0 6px 18px rgba(0,0,0,0.6);
     }
 
     .slot-row {
@@ -138,6 +144,32 @@ def build_webrtc_index_html() -> str:
     height: 1px;
     background: #333;
     margin: 6px 0;
+    }
+    
+    .slot-mismatch {
+      color: #ffb347; /* amber */
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.65; }
+      100% { opacity: 1; }
+    }
+
+    @media (max-width: 820px) {
+      .container {
+        padding: 12px;
+      }
+      .slot-row {
+        gap: 8px;
+      }
+      .slot-card {
+        font-size: 13px;
+      }
+      #video {
+        max-height: 48vh;
+      }
     }
   </style>
 </head>
@@ -176,6 +208,7 @@ def build_webrtc_index_html() -> str:
         STATUS: <span id="slot-status">-</span>
         START_GC: <span id="slot-start-gc">-</span>
         END_GC: <span id="slot-end-gc">-</span>
+        DURATION: <span id="slot-duration">-</span>
     </div>
     </div>
     <div class="controls">
@@ -336,11 +369,21 @@ def build_webrtc_index_html() -> str:
     const slotStatus = document.getElementById('slot-status');
     const slotStartGc = document.getElementById('slot-start-gc');
     const slotEndGc = document.getElementById('slot-end-gc');
+    const slotDuration = document.getElementById('slot-duration');
 
     function formatTime(ts) {
       if (!ts) return '-';
       const d = new Date(ts);
       return d.toLocaleString();
+    }
+    
+    function formatDuration(ms) {
+      if (!Number.isFinite(ms) || ms <= 0) return '-';
+      const s = Math.floor(ms / 1000);
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      return `${h}h ${m}m ${sec}s`;
     }
 
     let lastSlotSnapshot = null;
@@ -369,6 +412,18 @@ def build_webrtc_index_html() -> str:
       slotDown.textContent       = breakdown.down ?? 0;
       slotTotal.textContent      = slot.slot_count ?? 0;
       slotDeclared.textContent   = slot.declared_count ?? '-';
+      
+      slotTotal.classList.remove('slot-mismatch');
+      slotDeclared.classList.remove('slot-mismatch');
+
+      const declaredNum = Number(slot.declared_count);
+      const slotCountNum = Number(slot.slot_count);
+      const hasComparableCounts =
+        Number.isFinite(declaredNum) && Number.isFinite(slotCountNum);
+      if (hasComparableCounts && declaredNum !== slotCountNum) {
+        slotTotal.classList.add('slot-mismatch');
+        slotDeclared.classList.add('slot-mismatch');
+      }
 
       slotStatus.textContent = isActive ? (slot.status ?? 'ACTIVE') : 'INACTIVE';
 
@@ -377,6 +432,16 @@ def build_webrtc_index_html() -> str:
 
       slotStartGc.textContent    = slot.start_global_count ?? '-';
       slotEndGc.textContent      = slot.end_global_count ?? '-';
+      
+      if (slot.start_time && slotDuration) {
+        const startMs = new Date(slot.start_time).getTime();
+        const endMs = isActive
+          ? Date.now()
+          : new Date(resolvedEnd ?? Date.now()).getTime();
+        slotDuration.textContent = formatDuration(endMs - startMs);
+      } else if (slotDuration) {
+        slotDuration.textContent = '-';
+      }
     }
 
     async function pollSlotState() {
@@ -415,7 +480,16 @@ def build_webrtc_index_html() -> str:
 
     // Poll at a moderate interval to reduce API pressure on constrained devices.
     setInterval(pollSlotState, 3000);
-
+    
+    setInterval(() => {
+      try {
+        if (lastSlotSnapshot) {
+          renderSlotCard(lastSlotSnapshot, slotStatus.classList.contains('slot-status-active'));
+        }
+      } catch (e) {
+        console.warn('slot duration refresh failed', e);
+      }
+    }, 1000);
   </script>
 </body>
 </html>
