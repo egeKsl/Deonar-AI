@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import json
 import traceback
+import time
 from typing import Dict, Optional, Set
 
 import numpy as np
@@ -111,6 +111,10 @@ class WebRTCServer:
 
         # Control queue (to DisplayWorker / Runner)
         self._control_queue: Optional[std_queue.Queue] = None
+        self._slot_manager = None
+        # Cache slot-state snapshots to avoid hitting SlotManager on every browser poll.
+        self._slot_state_cache = {"ts": 0.0, "data": {"active": False, "slot": None}}
+        self._slot_state_cache_ttl_s = 2.0
 
         log.debug(
             "WEBRTC",
@@ -205,11 +209,13 @@ class WebRTCServer:
     async def _init_app(self):
         app = web.Application()
         app["server"] = self  # allow handlers to access server
+        app["slot_manager"] = self._slot_manager
 
         app.router.add_get("/", self._index_handler)
         app.router.add_post("/offer", self._offer_handler)
         app.router.add_post("/control", self._control_handler)
         app.router.add_get("/health", self._health_handler)
+        app.router.add_get("/slot-state", self._slot_state_handler)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -313,12 +319,101 @@ class WebRTCServer:
     #status.error {{
       color: #ff5c5c;
     }}
+    /* Slot status colors */
+    .slot-status-active {{
+    color: #1ddf8b; /* green */
+    font-weight: 600;
+    }}
+
+    .slot-status-inactive {{
+    color: #ff5c5c; /* red */
+    font-weight: 600;
+    }}
+
+    .slot-card {{
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, #1f1f1f 0%, #232323 100%);
+    border-left: 4px solid #1ddf8b;
+    border-radius: 6px;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.6);
+    font-size: 14px;
+    transition: opacity 0.2s ease, filter 0.2s ease, border-color 0.2s ease;
+    }}
+
+    .slot-card.hidden {{
+    display: none;
+    }}
+
+    .slot-card.inactive {{
+    border-left-color: #8a8a8a;
+    opacity: 0.72;
+    filter: saturate(0.8);
+    }}
+
+    .slot-row {{
+    margin: 4px 0;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    }}
+
+    .slot-title {{
+    font-size: 15px;
+    font-weight: 600;
+    color: #1ddf8b;
+    }}
+
+    .slot-counts span,
+    .slot-meta span {{
+    font-family: monospace;
+    font-weight: 600;
+    }}
+
+    .slot-divider {{
+    height: 1px;
+    background: #333;
+    margin: 6px 0;
+    }}
   </style>
 </head>
 <body>
   <div class="container">
     <h3>Goat Stream (WebRTC)</h3>
     <video id="video" autoplay playsinline controls muted></video>
+    <!-- Slot Info Card -->
+    <div id="slot-card" class="slot-card hidden">
+    <div class="slot-row slot-title">
+        SLOT: <span id="slot-id">-</span>
+    </div>
+
+    <div class="slot-row">
+        VENDOR ID: <span id="slot-vendor-id">-</span>
+        VENDOR: <span id="slot-vendor-name">-</span>
+    </div>
+
+    <div class="slot-row">
+        START: <span id="slot-start">-</span>
+        END: <span id="slot-end">-</span>
+    </div>
+
+    <div class="slot-divider"></div>
+
+    <div class="slot-row slot-counts">
+        UP: <span id="slot-up">0</span>
+        DOWN: <span id="slot-down">0</span>
+        TOTAL: <span id="slot-total">0</span>
+        DECLARED: <span id="slot-declared">-</span>
+    </div>
+
+    <div class="slot-divider"></div>
+
+    <div class="slot-row slot-meta">
+        STATUS: <span id="slot-status">-</span>
+        START_GC: <span id="slot-start-gc">-</span>
+        END_GC: <span id="slot-end-gc">-</span>
+    </div>
+    </div>
     <div class="controls">
       <button id="btn_start">Reconnect</button>
       <button id="btn_screenshot" class="secondary">Screenshot</button>
@@ -464,6 +559,100 @@ class WebRTCServer:
         pc = null;
       }}
     }});
+
+    const slotCard   = document.getElementById('slot-card');
+    const slotId     = document.getElementById('slot-id');
+    const slotVendorId   = document.getElementById('slot-vendor-id');
+    const slotVendorName = document.getElementById('slot-vendor-name');
+    const slotStart  = document.getElementById('slot-start');
+    const slotEnd    = document.getElementById('slot-end');
+    const slotUp     = document.getElementById('slot-up');
+    const slotDown   = document.getElementById('slot-down');
+    const slotTotal  = document.getElementById('slot-total');
+    const slotDeclared = document.getElementById('slot-declared');
+    const slotStatus = document.getElementById('slot-status');
+    const slotStartGc = document.getElementById('slot-start-gc');
+    const slotEndGc = document.getElementById('slot-end-gc');
+
+    function formatTime(ts) {{
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return d.toLocaleString();
+    }}
+
+    let lastSlotSnapshot = null;
+    let lastActiveSlotId = null;
+    let inactiveEndTimeIso = null;
+
+    function renderSlotCard(slot, isActive) {{
+      if (!slot) {{
+        slotCard.classList.add('hidden');
+        return;
+      }}
+
+      const breakdown = slot.direction_breakdown || {{}};
+      slotCard.classList.remove('hidden');
+      slotCard.classList.toggle('inactive', !isActive);
+
+      slotId.textContent         = slot.slot_id ?? '-';
+      slotVendorId.textContent   = slot.vendor_id ?? '-';
+      slotVendorName.textContent = slot.vendor_name ?? '-';
+      slotStart.textContent      = formatTime(slot.start_time);
+      // If inactive snapshot has no explicit end_time, show locally captured transition time.
+      const resolvedEnd = slot.end_time ?? inactiveEndTimeIso;
+      slotEnd.textContent        = formatTime(resolvedEnd);
+
+      slotUp.textContent         = breakdown.up ?? 0;
+      slotDown.textContent       = breakdown.down ?? 0;
+      slotTotal.textContent      = slot.slot_count ?? 0;
+      slotDeclared.textContent   = slot.declared_count ?? '-';
+
+      slotStatus.textContent = isActive ? (slot.status ?? 'ACTIVE') : 'INACTIVE';
+
+    slotStatus.classList.remove('slot-status-active', 'slot-status-inactive');
+    slotStatus.classList.add(isActive ? 'slot-status-active' : 'slot-status-inactive');
+
+      slotStartGc.textContent    = slot.start_global_count ?? '-';
+      slotEndGc.textContent      = slot.end_global_count ?? '-';
+    }}
+
+    async function pollSlotState() {{
+    // Avoid background-tab churn and unnecessary polling when page is hidden.
+    if (document.hidden) return;
+    try {{
+        const resp = await fetch('/slot-state');
+        if (!resp.ok) return;
+
+        const data = await resp.json();
+
+        if (data.active && data.slot) {{
+          lastActiveSlotId = data.slot.slot_id ?? null;
+          inactiveEndTimeIso = null;
+        }}
+
+        if (data.slot) {{
+          lastSlotSnapshot = data.slot;
+        }}
+        if (data.active && data.slot) {{
+          renderSlotCard(data.slot, true);
+        }} else if (lastSlotSnapshot) {{
+          // Capture a stable local end-time once when the slot transitions inactive.
+          if (!inactiveEndTimeIso && lastActiveSlotId && lastSlotSnapshot.slot_id === lastActiveSlotId) {{
+            inactiveEndTimeIso = new Date().toISOString();
+          }}
+          // Keep the latest slot visible in a dimmed state for operator context.
+          renderSlotCard(lastSlotSnapshot, false);
+        }} else {{
+          slotCard.classList.add('hidden');
+        }}
+    }} catch (e) {{
+        console.warn('slot poll failed', e);
+    }}
+    }}
+
+    // Poll at a moderate interval to reduce API pressure on constrained devices.
+    setInterval(pollSlotState, 3000);
+
   </script>
 </body>
 </html>
@@ -577,12 +766,39 @@ class WebRTCServer:
                 "peers": len(self._pcs),
                 "frame_queues": len(self._frame_queues),
             }
-            slot_mgr = getattr(request.app.get("slot_manager", None), None)
-            if slot_mgr and slot_mgr.is_slot_active():
-                info["slot"] = slot_mgr.get_active_slot_snapshot()
             return web.json_response(info)
         except Exception:
             return web.json_response({"ok": False, "error": "health_failed"})
+
+    def _get_slot_state_cached(self):
+        """
+        Return slot state with TTL caching to reduce repeated SlotManager access
+        under frequent browser polling.
+        """
+        now = time.monotonic()
+        last_ts = float(self._slot_state_cache.get("ts", 0.0))
+        if (now - last_ts) < self._slot_state_cache_ttl_s:
+            return self._slot_state_cache.get("data", {"active": False, "slot": None})
+
+        slot_mgr = self._slot_manager
+        data = {"active": False, "slot": None}
+        try:
+            if slot_mgr is not None:
+                # Lightweight public snapshot only.
+                data = slot_mgr.get_public_state()
+        except Exception:
+            # Keep endpoint resilient; never break WebRTC loop for slot-state failures.
+            data = {"active": False, "slot": None}
+
+        self._slot_state_cache["ts"] = now
+        self._slot_state_cache["data"] = data
+        return data
+
+    async def _slot_state_handler(self, request: web.Request):
+        try:
+            return web.json_response(self._get_slot_state_cached())
+        except Exception:
+            return web.json_response({"active": False, "slot": None})
 
     # ------------------------------------------------------------------
     # Internal helpers

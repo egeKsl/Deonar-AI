@@ -169,6 +169,16 @@ def start_slot_api_if_enabled(config: dict, slot_manager) -> Optional[SlotApiRun
     def health_check():
         return {"status": "healthy", "service": "slot-api"}
 
+    @app.get("/")
+    def index():
+        """Human-friendly landing endpoint for quick browser access."""
+        return {
+            "service": "slot-api",
+            "status": "ok",
+            "health": "/health",
+            "docs": "/docs",
+        }
+
     app.include_router(create_slot_router(slot_manager))
 
     runtime = SlotApiRuntime(app=app, host=host, port=port)
