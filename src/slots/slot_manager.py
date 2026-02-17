@@ -33,6 +33,7 @@ class SlotRuntime:
         declared_count: Optional[int],
         start_time: datetime,
         start_global_count: int,
+        slot_dir: Optional[Path] = None,
     ):
         self.slot_id = slot_id
         self.vendor_id = vendor_id
@@ -44,6 +45,8 @@ class SlotRuntime:
 
         self.start_global_count = start_global_count
         self.end_global_count: Optional[int] = None
+        # Concrete filesystem directory associated with this slot lifecycle.
+        self.slot_dir: Optional[Path] = slot_dir
 
         self.slot_count: int = 0
         self.direction_breakdown: Dict[str, int] = {"up": 0, "down": 0}
@@ -117,11 +120,40 @@ class SlotManager:
         self._slots_dir = slots_dir
         self._run_id = run_id
         self._source = source
-        self._get_global_count = global_count_supplier
+
+        # callback functions
+        self._get_global_count = global_count_supplier  # function to get the latest global count when starting/stopping slots
+
+        # lifecycle callbacks
+        self._on_slot_start = []
+        self._on_slot_stop = []
+        self._on_slot_abort = []
+
+        self._current_slot_dir: Optional[Path] = None
 
         # 🧠 lifecycle memory (NEW)
         self._last_started_slot_id: Optional[str] = None
         self._last_stopped_slot_id: Optional[str] = None
+
+    @staticmethod
+    def _format_slot_dir_name(slot_id: str, ts: datetime, status: str) -> str:
+        ts_str = ts.strftime("%Y%m%d_%H%M%S")
+        return f"SLOT_{slot_id}__{ts_str}__{status}"
+
+    # -----------------------------
+    # Lifecycle callback registration
+    # -----------------------------
+    def register_on_slot_start(self, fn):
+        """Called after a slot is successfully started."""
+        self._on_slot_start.append(fn)
+
+    def register_on_slot_stop(self, fn):
+        """Called after a slot is successfully completed."""
+        self._on_slot_stop.append(fn)
+
+    def register_on_slot_abort(self, fn):
+        """Called after a slot is aborted."""
+        self._on_slot_abort.append(fn)
 
     # -----------------------------
     # Slot lifecycle
@@ -168,6 +200,13 @@ class SlotManager:
 
         start_global_count = self._get_global_count()
 
+        slot_dir_name = self._format_slot_dir_name(
+            payload.slot_id,
+            payload.timestamp,
+            "ACTIVE",
+        )
+        self._current_slot_dir = self._slots_dir / slot_dir_name
+
         self._active_slot = SlotRuntime(
             slot_id=payload.slot_id,
             vendor_id=payload.vendor_id,
@@ -175,14 +214,22 @@ class SlotManager:
             declared_count=payload.declared_count,
             start_time=payload.timestamp,
             start_global_count=start_global_count,
+            slot_dir=self._current_slot_dir,
         )
 
         self._csv_writer = SlotCsvWriter(
-            slots_dir=self._slots_dir,
+            slots_dir=self._current_slot_dir,
             slot_id=payload.slot_id,
             vendor_id=payload.vendor_id,
             vendor_name=payload.vendor_name,
         )
+
+        # Fire slot start callbacks
+        for cb in self._on_slot_start:
+            try:
+                cb(self._active_slot)
+            except Exception as e:
+                log.warn("SLOT", f"on_slot_start callback failed: {e}")
 
         # remember lifecycle
         self._last_started_slot_id = payload.slot_id
@@ -234,6 +281,25 @@ class SlotManager:
             status=final_status,
         )
 
+        # ---------------------------------------
+        # Rename slot directory with final status
+        # ---------------------------------------
+        try:
+            final_dir_name = self._format_slot_dir_name(
+                slot.slot_id,
+                slot.start_time,
+                slot.status,  # COMPLETED or ABORTED
+            )
+
+            final_dir = self._slots_dir / final_dir_name
+
+            if self._current_slot_dir and self._current_slot_dir.exists():
+                self._current_slot_dir.rename(final_dir)
+                self._current_slot_dir = final_dir
+                slot.slot_dir = final_dir
+        except Exception as e:
+            log.warn("SLOT", f"Failed to rename slot directory: {e}")
+
         if self._csv_writer:
             try:
                 self._csv_writer.close()
@@ -270,7 +336,7 @@ class SlotManager:
             end_global_count=slot.end_global_count,
             run_id=self._run_id,
             source=self._source,
-            output_root=self._slots_dir,
+            output_root=self._current_slot_dir,  # Summary will be saved in the same dir as the slot CSV
         )
 
         log.info(
@@ -278,6 +344,13 @@ class SlotManager:
             f"Stopped slot {slot.slot_id} "
             f"(counted={slot.slot_count}, status={slot.status})",
         )
+
+        # Fire slot stop callbacks
+        for cb in self._on_slot_stop:
+            try:
+                cb(slot)
+            except Exception as e:
+                log.warn("SLOT", f"on_slot_stop callback failed: {e}")
 
         self._last_stopped_slot_id = slot.slot_id
         self._active_slot = None
@@ -344,7 +417,13 @@ class SlotManager:
         )
 
         try:
-            self.stop_slot(fake_payload)
+            aborted_slot = self.stop_slot(fake_payload)
+            for cb in self._on_slot_abort:
+                try:
+                    cb(aborted_slot)
+                except Exception as e:
+                    log.warn("SLOT", f"on_slot_abort callback failed: {e}")
+
         except Exception as e:
             log.error("SLOT", f"Failed to abort slot cleanly: {e}")
 

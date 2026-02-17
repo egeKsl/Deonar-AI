@@ -834,6 +834,17 @@ def run_threaded(args):
                     global_count_supplier=get_global_count,
                 )
 
+                # Register display callbacks before exposing Slot API to avoid
+                # races where API starts/stop slots before recorder callbacks exist.
+                if display is not None:
+                    slot_manager.register_on_slot_start(display.on_slot_start)
+                    slot_manager.register_on_slot_stop(display.on_slot_stop)
+                    slot_manager.register_on_slot_abort(display.on_slot_abort)
+                    log.debug(
+                        "RUNNER",
+                        "Slot lifecycle callbacks registered with DisplayWorker",
+                    )
+
                 # Slot API runtime config is intentionally minimal:
                 # host/port only; enablement is controlled by slots_enabled + vision_ready.
                 slot_api_cfg = {

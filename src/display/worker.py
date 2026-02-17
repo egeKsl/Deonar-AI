@@ -16,6 +16,7 @@ Design notes:
  - All display operations are defensive and isolated.
 """
 
+from pathlib import Path
 import threading
 import queue
 import time
@@ -167,8 +168,11 @@ class DisplayWorker(threading.Thread):
 
         # --- new: video recorder config ---
         record_video = bool(getattr(self.args, "record_video", False))
+        self._record_video_enabled = record_video
+        slots_enabled = bool(getattr(self.args, "slots_enabled", False))
         self.video_recorder: Optional[VideoRecorder] = None
-        if record_video:
+
+        if record_video and not slots_enabled:
             # Prefer config fps; otherwise use capture fps; fallback 25.0
             cap_fps = injected.get("fps", 25.0)
             fps = float(getattr(self.args, "video_fps", cap_fps) or cap_fps)
@@ -191,8 +195,93 @@ class DisplayWorker(threading.Thread):
                 f"Video recording enabled -> {video_path} (fps={fps}, fourcc={fourcc})",
             )
         else:
-            log.debug("DISPLAY-WORKER", "Video recording disabled")
-            
+            log.debug(
+                "DISPLAY-WORKER",
+                "Global video recording disabled (will check for slot-specific recording)",
+            )
+
+    # ---------------- Callbacks functions for video slot recordings ----------------
+    def on_slot_start(self, slot):
+        """
+        Slot lifecycle callback.
+        Start slot-specific video recording.
+        """
+        if not self._record_video_enabled:
+            log.debug(
+                "DISPLAY-WORKER-SLOT",
+                "Slot start received but video recording is disabled by config",
+            )
+            return
+
+        if self.video_recorder is not None:
+            self.video_recorder.close()
+            self.video_recorder = None
+            log.warn(
+                "DISPLAY-WORKER-SLOT",
+                f"Closed previous video recorder for slot {slot.slot_id}",
+            )
+
+        try:
+            # Prefer SlotManager-provided directory so video sits with slot CSV/summary.
+            slot_dir = getattr(slot, "slot_dir", None) or (
+                Path(self.args.csv_slots_dir) / slot.slot_id
+            )
+            slot_dir = Path(slot_dir)
+            video_path = slot_dir / "slot_video.mp4"
+            # Prefer config fps; otherwise use capture fps; fallback 25.0
+            cap_fps = self.injected.get("fps", 25.0)
+            fps = float(getattr(self.args, "video_fps", cap_fps) or cap_fps)
+            fourcc = getattr(self.args, "video_fourcc", "mp4v")
+            overwrite = bool(getattr(self.args, "overwrite_video", False))
+
+            self.video_recorder = VideoRecorder(
+                path=video_path,
+                fps=fps,
+                fourcc=fourcc,
+                overwrite=overwrite,
+            )
+
+            log.info(
+                "DISPLAY-WORKER-SLOT",
+                f"Slot video recording started: {video_path} (fps={fps}, fourcc={fourcc})",
+            )
+        except Exception as e:
+            log.error("DISPLAY-WORKER-SLOT", f"Failed to start slot recording: {e}")
+
+    def on_slot_stop(self, slot):
+        """
+        Slot lifecycle callback.
+        Stop slot-specific video recording.
+        """
+        if self.video_recorder:
+            try:
+                self.video_recorder.close()
+                log.info(
+                    "DISPLAY-WORKER-SLOT",
+                    f"Slot video recording stopped: {slot.slot_id}",
+                )
+            except Exception as e:
+                log.warn("DISPLAY-WORKER-SLOT", f"Failed stopping slot recording: {e}")
+            finally:
+                self.video_recorder = None
+
+    def on_slot_abort(self, slot):
+        """
+        Slot lifecycle callback.
+        Abort slot-specific recording.
+        """
+        if self.video_recorder:
+            try:
+                self.video_recorder.close()
+                log.warn(
+                    "DISPLAY-WORKER-SLOT",
+                    f"Slot video recording aborted: {getattr(slot, 'slot_id', 'unknown')}",
+                )
+            except Exception as e:
+                log.warn("DISPLAY-WORKER-SLOT", f"Failed aborting slot recording: {e}")
+            finally:
+                self.video_recorder = None
+
     def _build_slot_hud_data(self):
         """
         Build minimal HUD data when a slot is ACTIVE.
@@ -218,7 +307,6 @@ class DisplayWorker(threading.Thread):
             "fps": None,  # filled later from res
             "now": now.strftime("%H:%M:%S"),
         }
-
 
     # ---------------- drawing context ----------------
     def _ensure_drawing(self, sample_frame):
@@ -792,9 +880,7 @@ class DisplayWorker(threading.Thread):
                 ) = self._prepare_frame_context(res, frame, roi)
 
                 # run counting/tracking logic (same as run_original)
-                infer_fps = float(
-                    res.get("infer_fps", res.get("avg_fps", 0.0)) or 0.0
-                )
+                infer_fps = float(res.get("infer_fps", res.get("avg_fps", 0.0)) or 0.0)
                 e2e_fps = self._update_e2e_fps()
                 # Enrich payload for downstream HUD renderers.
                 res["infer_fps"] = infer_fps
@@ -812,7 +898,7 @@ class DisplayWorker(threading.Thread):
                     lineB_roi,
                     lineB_full,
                 )
-                
+
                 # Decide HUD mode
                 slot_mgr = self.injected.get("slot_manager")
                 slot_hud = None
@@ -822,7 +908,6 @@ class DisplayWorker(threading.Thread):
                     slot_hud = self._build_slot_hud_data()
                     if slot_hud:
                         hud_mode = "slot_active"
-
 
                 # compose frames
                 roi_disp, full_disp = self._compose_display_frames(
