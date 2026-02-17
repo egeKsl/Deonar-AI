@@ -136,9 +136,11 @@ class SlotManager:
         self._last_stopped_slot_id: Optional[str] = None
 
     @staticmethod
-    def _format_slot_dir_name(slot_id: str, ts: datetime, status: str) -> str:
+    def _format_slot_dir_name(slot_id: str, ts: datetime) -> str:
         ts_str = ts.strftime("%Y%m%d_%H%M%S")
-        return f"SLOT_{slot_id}__{ts_str}__{status}"
+        # Keep slot folder name stable for cross-platform reliability.
+        # Final lifecycle status is persisted in metadata files, not in path renames.
+        return f"SLOT_{slot_id}__{ts_str}"
 
     # -----------------------------
     # Lifecycle callback registration
@@ -200,11 +202,7 @@ class SlotManager:
 
         start_global_count = self._get_global_count()
 
-        slot_dir_name = self._format_slot_dir_name(
-            payload.slot_id,
-            payload.timestamp,
-            "ACTIVE",
-        )
+        slot_dir_name = self._format_slot_dir_name(payload.slot_id, payload.timestamp)
         self._current_slot_dir = self._slots_dir / slot_dir_name
 
         self._active_slot = SlotRuntime(
@@ -281,24 +279,8 @@ class SlotManager:
             status=final_status,
         )
 
-        # ---------------------------------------
-        # Rename slot directory with final status
-        # ---------------------------------------
-        try:
-            final_dir_name = self._format_slot_dir_name(
-                slot.slot_id,
-                slot.start_time,
-                slot.status,  # COMPLETED or ABORTED
-            )
-
-            final_dir = self._slots_dir / final_dir_name
-
-            if self._current_slot_dir and self._current_slot_dir.exists():
-                self._current_slot_dir.rename(final_dir)
-                self._current_slot_dir = final_dir
-                slot.slot_dir = final_dir
-        except Exception as e:
-            log.warn("SLOT", f"Failed to rename slot directory: {e}")
+        # No directory rename here. Folder name is intentionally stable.
+        # This avoids platform-specific rename failures while file handles may still exist.
 
         if self._csv_writer:
             try:
