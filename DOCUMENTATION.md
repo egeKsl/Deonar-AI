@@ -127,7 +127,7 @@ Ultralytics YOLO produces a rich set of training outputs: loss curves, precision
 
 **Loss curves** — the story of how training progressed. Box loss (how accurate the bounding box position is), class loss (how confident the class prediction is), DFL loss (distribution focal loss — how precise the box edges are). Watching these converge correctly vs. diverge or plateau early revealed what the model was struggling with.
 
-Training was done on Kaggle (free T4/P100 GPU access). Multiple runs across YOLOv11-nano, YOLOv11-small, YOLOv12-nano, and YOLOv12-small. Final results: all four models achieved **~99% mAP@50** on the validation set. The nano models, despite being 3.5x smaller than the small models, reached within 0.1% of the same accuracy — a testament to the dataset quality.
+Training was done in two phases. Early experiments and smaller dataset runs were done on **Kaggle** (free dual T4 GPU notebooks) — good enough for iterating on architecture and hyperparameters with partial data. Once the full 20,000-image dataset was ready, Kaggle's time limits and memory constraints became a bottleneck. The final production training runs were done on **Vast.ai** — a GPU cloud rental platform — using an **RTX 5090 with 24GB VRAM**. This gave enough memory to train at imgsz=1024 with reasonable batch sizes without OOM issues, and enough runtime to let the models train to proper convergence with early stopping. Final results across all four variants: **~99% mAP@50** on the validation set. The nano models, despite being 3.5x smaller than the small models, reached within 0.1% of the same accuracy — a testament to the dataset quality rather than model size.
 
 ---
 
