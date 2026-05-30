@@ -1,4 +1,5 @@
 # src/viz/_shapes.py
+"""Shape drawing primitives: filled polygons with alpha blending, bounding boxes, circles, lines."""
 import cv2
 import numpy as np
 

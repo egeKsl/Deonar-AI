@@ -1,4 +1,5 @@
 # src/viz/colorer.py
+"""Track color manager: assigns and persists per-track-ID colors, marks counted tracks blue."""
 from typing import Dict
 
 

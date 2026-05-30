@@ -166,7 +166,7 @@ def _prepare_injected_context(args, cap_info):
             injected_csvs = CsvWriters(
                 events_path=args.csv_events,
                 ts_path=args.csv_timeseries,
-                decisions_path=decisions_path,  # decisions CSV not injected here
+                decisions_path=decisions_path,
             )
             injected["csvs"] = injected_csvs
             log.debug("RUNNER", "Prepared CsvWriters for DisplayWorker (injected).")
@@ -298,6 +298,7 @@ def _monitor_threads(
     stop_event,
     cap_info,
     args,
+    metrics=None,
 ):
     """
     Monitor and restart threads if they crash unexpectedly.
@@ -513,6 +514,7 @@ def _monitor_threads(
                                 capture_q=capture_queue,
                                 out_q=pacing_out_q,
                                 cfg=getattr(args, "runtime_cfg", {}),
+                                metrics=metrics,
                             )
                             pacer.start()
                             pacer_restarted = True
@@ -564,6 +566,7 @@ def _monitor_threads(
                                 stop_event,
                                 args,
                                 cap_info=cap_info,
+                                metrics=metrics,
                             )
                             infer.start()
                             infer_restarted = True
@@ -750,8 +753,8 @@ def run_threaded(args):
             rtc_port = int(getattr(args, "webrtc_port", 8080))
             rtc_fps = float(getattr(args, "webrtc_fps", 25.0))
             rtc_max_clients = getattr(args, "webrtc_max_clients", 2)
-            rtc_downscale_height = int(getattr(args, "webrtc_downscale_height", 960))
-            rtc_downscale_width = int(getattr(args, "webrtc_downscale_width", 540))
+            rtc_downscale_height = int(getattr(args, "webrtc_downscale_height", 540))
+            rtc_downscale_width = int(getattr(args, "webrtc_downscale_width", 960))
 
             webrtc_server = WebRTCServer(
                 host=rtc_host,
@@ -894,6 +897,7 @@ def run_threaded(args):
         stop_event,
         cap_info,
         args,
+        metrics=metrics,
     )
     _cleanup(
         pacer,

@@ -1,4 +1,5 @@
 # src/viz/animator.py
+"""Count-event animation: renders the +1 flash/trail effect on-screen when a goat crossing is confirmed."""
 import cv2
 from ..geometry.geom import project_point_to_segment
 

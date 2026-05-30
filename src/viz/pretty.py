@@ -1,4 +1,5 @@
 # src/viz/pretty.py
+"""HUD (heads-up display) rendering: draws the count overlay, FPS, slot status, and debug info onto frames."""
 import cv2
 import numpy as np
 from typing import Optional, Tuple

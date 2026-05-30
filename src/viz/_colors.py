@@ -1,4 +1,5 @@
 # src/viz/_colors.py
+"""Color utilities: HSV→BGR conversion and deterministic per-ID color hashing."""
 from typing import Tuple
 
 

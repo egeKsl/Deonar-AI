@@ -1,4 +1,5 @@
 from __future__ import annotations
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -115,6 +116,11 @@ class SlotManager:
         source: str,
         global_count_supplier: Callable[[], int],
     ):
+        # Thread safety: start_slot/stop_slot are called from the slot API thread
+        # (FastAPI) while on_global_count_event is called from the display thread.
+        # A single lock serialises all mutations and reads of _active_slot.
+        self._lock = threading.Lock()
+
         self._active_slot: Optional[SlotRuntime] = None
         self._csv_writer: Optional[SlotCsvWriter] = None
         self._slots_dir = slots_dir
@@ -169,7 +175,10 @@ class SlotManager:
         - Different slot_id while ACTIVE -> ERROR
         - Restarting a previously stopped slot -> ERROR
         """
+        with self._lock:
+            return self._start_slot_locked(payload)
 
+    def _start_slot_locked(self, payload: SlotStartPayload) -> None:
         # -------------------------------------------------
         # Idempotency: same slot already active
         # -------------------------------------------------
@@ -240,7 +249,10 @@ class SlotManager:
         - Stopping same slot twice -> NO-OP
         - Stopping when no slot active -> ERROR
         """
+        with self._lock:
+            return self._stop_slot_locked(payload)
 
+    def _stop_slot_locked(self, payload: SlotStopPayload) -> SlotRuntime:
         # -------------------------------------------------
         # Idempotency: already stopped
         # -------------------------------------------------
@@ -356,33 +368,35 @@ class SlotManager:
         Returns:
             SlotCountEvent if routed, else None
         """
-        if self._active_slot is None:
-            return None
+        with self._lock:
+            if self._active_slot is None:
+                return None
 
-        event = SlotCountEvent(
-            slot_id=self._active_slot.slot_id,
-            slot_count=self._active_slot.slot_count + 1,
-            global_count=global_count,
-            direction=direction,
-            timestamp=timestamp,
-            track_id=track_id,
-            proc_frame_idx=proc_frame_idx,
-        )
+            event = SlotCountEvent(
+                slot_id=self._active_slot.slot_id,
+                slot_count=self._active_slot.slot_count + 1,
+                global_count=global_count,
+                direction=direction,
+                timestamp=timestamp,
+                track_id=track_id,
+                proc_frame_idx=proc_frame_idx,
+            )
 
-        self._active_slot.add_event(event)
+            self._active_slot.add_event(event)
 
-        log.debug(
-            "SLOT",
-            f"Slot {event.slot_id}: "
-            f"+1 ({event.direction}) "
-            f"[slot={event.slot_count}, global={event.global_count}]",
-        )
+            log.debug(
+                "SLOT",
+                f"Slot {event.slot_id}: "
+                f"+1 ({event.direction}) "
+                f"[slot={event.slot_count}, global={event.global_count}]",
+            )
 
-        return event
+            return event
 
     def abort_active_slot_if_any(self):
-        if not self._active_slot:
-            return
+        with self._lock:
+            if not self._active_slot:
+                return
 
         log.warn(
             "SLOT",
@@ -413,19 +427,25 @@ class SlotManager:
     # Introspection helpers
     # -----------------------------
     def is_slot_active(self) -> bool:
-        return self._active_slot is not None
+        with self._lock:
+            return self._active_slot is not None
 
     def get_active_slot_snapshot(self) -> Optional[dict]:
-        if self._active_slot is None:
-            return None
-        return self._active_slot.snapshot()
+        with self._lock:
+            if self._active_slot is None:
+                return None
+            return self._active_slot.snapshot()
 
     def get_csv_writer(self) -> Optional[SlotCsvWriter]:
-        return self._csv_writer
+        with self._lock:
+            return self._csv_writer
 
     def get_public_state(self) -> dict:
         """Public-facing slot API state used by lightweight status endpoints."""
-        return {
-            "active": self.is_slot_active(),
-            "slot": self.get_active_slot_snapshot(),
-        }
+        with self._lock:
+            return {
+                "active": self._active_slot is not None,
+                "slot": (
+                    self._active_slot.snapshot() if self._active_slot is not None else None
+                ),
+            }

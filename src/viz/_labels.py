@@ -1,4 +1,5 @@
 # src/viz/_labels.py
+"""Label drawing helpers: track ID overlays, count text, HUD text rendering."""
 import cv2
 import numpy as np
 from ._shapes import _rounded_rect, _draw_filled_poly_alpha, _rounded_rect_pts

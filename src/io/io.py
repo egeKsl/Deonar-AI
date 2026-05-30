@@ -1,5 +1,5 @@
 # src/io/io.py
-import os, cv2, csv
+import os, sys, cv2, csv
 from pathlib import Path
 import traceback
 from src.utils.logger import log
@@ -38,7 +38,11 @@ def infer_out_path(inp_path, run_root=None):
 
 
 def _ask_user_confirmation(default_path: str) -> str:
-    """Ask user to confirm or change the output path with validation."""
+    """Ask user to confirm or change the output path with validation.
+    In non-interactive (headless) environments, automatically accepts the default path."""
+    if not sys.stdin.isatty():
+        log.info("IO-SAVE", f"Non-interactive mode — using default save path: {default_path}")
+        return default_path
     while True:
         log.info("IO-SAVE", f" Default save path: {default_path}")
         resp = input("Do you want to save here? (y/n): ").strip().lower()
@@ -142,7 +146,10 @@ class CsvWriters:
     def __init__(self, events_path=None, ts_path=None, decisions_path=None):
         self.ev_writer = self.ts_writer = None
         self.ev_fh = self.ts_fh = None
-        self.ev_seen_ids = set()
+        # NOTE: ev_seen_ids removed. Deduplication is handled upstream by the
+        # counting logic (cooldown_frames / id_lock_frames). A per-session ID
+        # set here caused legitimate re-crossings (same ByteTrack ID reused
+        # after a long gap or across slots) to be silently dropped.
         self.dec_writer = None
         self.dec_fh = None
 
@@ -210,9 +217,6 @@ class CsvWriters:
     ) -> bool:
         try:
             if self.ev_writer:
-                if tid in self.ev_seen_ids:
-                    return False
-                self.ev_seen_ids.add(tid)
                 self.ev_writer.writerow(
                     [
                         f"{ts_s:.3f}",
@@ -226,8 +230,10 @@ class CsvWriters:
                 )
                 return True
         except Exception as e:
+            # Do NOT raise SystemExit here — this runs inside background threads
+            # and SystemExit in a non-main thread only kills that thread silently.
             safe_print_error("Failed to write event row", e)
-            raise SystemExit(1)
+            return False
         return False
 
     def write_timeseries(self, sec, up, down):
@@ -235,8 +241,8 @@ class CsvWriters:
             if self.ts_writer:
                 self.ts_writer.writerow([sec, up, down, up + down])
         except Exception as e:
+            # Do NOT raise SystemExit in a background thread — just log and continue.
             safe_print_error("Failed to write timeseries row", e)
-            raise SystemExit(1)
 
     def write_decision(
         self,
@@ -275,8 +281,8 @@ class CsvWriters:
                 )
                 self.dec_fh.flush()  # 🔥 CRITICAL for 24/7 safety
         except Exception as e:
+            # Do NOT raise SystemExit in a background thread — just log and continue.
             safe_print_error("Failed to write decision row", e)
-            raise SystemExit(1)
 
     def close(self):
         for fh, label in [

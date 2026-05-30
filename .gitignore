@@ -14,6 +14,7 @@ __pycache__/
 data/
 logs/
 outputs/
+
 # Python packaging artifacts
 *.egg-info/
 src/*.egg-info/
@@ -21,3 +22,11 @@ src/*.egg-info/
 build/
 dist/
 pip-wheel-metadata/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Model weights — hosted separately (HuggingFace / Google Drive)
+# Comment out the line below if you want to include weights in the repo
+models/*.pt
