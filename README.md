@@ -313,7 +313,7 @@ curl http://localhost:8090/api/slot/active
 
 ## 📜 License
 
-MIT License — free to use, modify, and distribute.
+This project is licensed under the Apache License 2.0. You are free to use, modify, and distribute this software, provided that copyright notices and license terms are preserved.
 
 ---
 
@@ -325,3 +325,4 @@ MIT License — free to use, modify, and distribute.
 - **Engineering, dataset, training & integration:** Ubada Ghawte
 - **Team:** Adil, Raafe
 - **Academic guide:** Prof. Farhan, Rizvi College of Engineering
+- **R&D Partner:** MI Tradings & General Suppliers (BMC contractor)
