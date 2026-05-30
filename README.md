@@ -1,7 +1,7 @@
 # 🐐 Goat Detection & Counting System
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![HuggingFace Models](https://img.shields.io/badge/🤗%20Models-ubada11%2Fgoat--detection--yolov11-yellow)](https://huggingface.co/ubada11/goat-detection-yolov11)
 [![YOLOv11](https://img.shields.io/badge/Detection-YOLOv11%20%7C%20YOLOv12-orange)](https://github.com/ultralytics/ultralytics)
 [![ByteTrack](https://img.shields.io/badge/Tracking-ByteTrack-red)](https://github.com/ifzhang/ByteTrack)
