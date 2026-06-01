@@ -23,221 +23,456 @@ def build_webrtc_index_html() -> str:
   <meta charset="utf-8">
   <title>Goat Stream (WebRTC)</title>
   <style>
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: Arial, Helvetica, sans-serif;
-      background: #111;
-      color: #eee;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-    }
-    .container {
-      background: #1b1b1b;
-      border-radius: 10px;
-      padding: 16px 20px 20px;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.7);
-      max-width: 960px;
-      width: 100%;
-    }
-    h3 {
-      margin: 0 0 10px;
-      font-weight: 600;
-      color: #f5f5f5;
-    }
-    #video {
-      width: 100%;
-      max-height: 540px;
-      background: #000;
-      border-radius: 6px;
-      border: 1px solid #333;
-    }
-    .controls {
-      margin-top: 10px;
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    button {
-      padding: 6px 14px;
-      border-radius: 4px;
-      border: none;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      background: #2d6cdf;
-      color: #fff;
-      transition: background 0.2s, transform 0.1s;
-    }
-    button:hover {
-      background: #3c7dff;
-    }
-    button:active {
-      transform: scale(0.97);
-    }
-    button.secondary {
-      background: #444;
-    }
-    #status {
-      margin-left: auto;
-      font-size: 13px;
-      color: #0fdf7b;
-      white-space: nowrap;
-    }
-    #status.error {
-      color: #ff5c5c;
-    }
-    /* Slot status colors */
-    .slot-status-active {
-    color: #1ddf8b; /* green */
-    font-weight: 600;
+    /* --------------------------------------------------
+      GLOBAL
+    -------------------------------------------------- */
+
+    *,*::before,*::after{
+      box-sizing:border-box;
     }
 
-    .slot-status-inactive {
-    color: #ff5c5c; /* red */
-    font-weight: 600;
+    body{
+      margin:0;
+      background:#0f0f0f;
+      color:#e0e0e0;
+      min-height:100vh;
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
     }
 
-    .slot-card {
-    margin-top: 12px;
-    padding: 12px 16px;
-    background: linear-gradient(135deg, #1f1f1f 0%, #232323 100%);
-    border-left: 4px solid #1ddf8b;
-    border-radius: 6px;
-    box-shadow: 0 6px 16px rgba(0,0,0,0.6);
-    font-size: 14px;
-    transition: opacity 0.4s ease, filter 0.4s ease, border-color 0.4s ease, transform 0.3s ease;
+    /* --------------------------------------------------
+      NAVBAR
+    -------------------------------------------------- */
+
+    .navbar{
+      background:#1b1b1b;
+      border-bottom:1px solid #272727;
+
+      display:flex;
+      align-items:center;
+      gap:10px;
+
+      padding:10px 20px;
+
+      position:sticky;
+      top:0;
+      z-index:100;
     }
 
-    .slot-card.hidden {
-    display: none;
+    .navbar-brand{
+      font-weight:700;
+      color:#1ddf8b;
+      margin-right:auto;
     }
 
-    .slot-card.inactive {
-    border-left-color: #8a8a8a;
-    opacity: 0.72;
-    filter: saturate(0.8);
-    transform: scale(0.995);
-    }
-    
-    .slot-card:not(.inactive) {
-      box-shadow: 0 0 0 1px rgba(29,223,139,0.25),
-                  0 6px 18px rgba(0,0,0,0.6);
+    .nav-link{
+      color:#888;
+      text-decoration:none;
+      font-size:.82rem;
+      padding:5px 11px;
+      border-radius:5px;
+      transition:.15s;
     }
 
-    .slot-row {
-    margin: 4px 0;
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
+    .nav-link:hover{
+      background:#252525;
+      color:#ddd;
     }
 
-    .slot-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: #1ddf8b;
+    .nav-link.active{
+      background:#1ddf8b22;
+      color:#1ddf8b;
     }
 
-    .slot-counts span,
-    .slot-meta span {
-    font-family: monospace;
-    font-weight: 600;
+    /* --------------------------------------------------
+      PAGE
+    -------------------------------------------------- */
+
+    .main{
+      max-width:1500px;
+      margin:0 auto;
+      padding:16px;
     }
 
-    .slot-divider {
-    height: 1px;
-    background: #333;
-    margin: 6px 0;
-    }
-    
-    .slot-mismatch {
-      color: #ffb347; /* amber */
-      animation: pulse 1.2s ease-in-out infinite;
+    .stream-layout{
+      display:flex;
+      flex-direction:column;
+      gap:14px;
     }
 
-    @keyframes pulse {
-      0% { opacity: 1; }
-      50% { opacity: 0.65; }
-      100% { opacity: 1; }
+    /* --------------------------------------------------
+      STREAM CARD
+    -------------------------------------------------- */
+
+    .stream-card{
+      background:#1a1a1a;
+      border:1px solid #262626;
+      border-radius:12px;
+      overflow:hidden;
     }
 
-    @media (max-width: 820px) {
-      .container {
-        padding: 12px;
+    .stream-header{
+      padding:14px 16px;
+      border-bottom:1px solid #262626;
+
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:12px;
+    }
+
+    .stream-title{
+      font-size:1rem;
+      font-weight:600;
+    }
+
+    .status-pill{
+      padding:6px 12px;
+      border-radius:999px;
+      font-size:.78rem;
+      font-weight:600;
+
+      background:#1ddf8b22;
+      color:#1ddf8b;
+    }
+
+    .status-pill.error{
+      background:#ff5c5c22;
+      color:#ff5c5c;
+    }
+
+    /* --------------------------------------------------
+      VIDEO
+    -------------------------------------------------- */
+
+    #video{
+      width:100%;
+      height:72vh;
+
+      min-height:450px;
+      max-height:900px;
+
+      display:block;
+
+      background:#000;
+
+      object-fit:contain;
+    }
+
+    /* --------------------------------------------------
+      SLOT CARD
+    -------------------------------------------------- */
+
+    .slot-card{
+      background:#1a1a1a;
+      border:1px solid #262626;
+      border-left:4px solid #1ddf8b;
+
+      border-radius:12px;
+
+      padding:18px;
+    }
+
+    .slot-card.inactive{
+      border-left-color:#666;
+      opacity:.75;
+    }
+
+    .slot-title{
+      font-size:1.1rem;
+      font-weight:700;
+      color:#1ddf8b;
+      margin-bottom:6px;
+    }
+
+    .slot-sub{
+      color:#999;
+      margin-bottom:14px;
+    }
+
+    .slot-row{
+      display:flex;
+      gap:12px;
+      flex-wrap:wrap;
+      margin:6px 0;
+    }
+
+    .slot-divider{
+      height:1px;
+      background:#2a2a2a;
+      margin:12px 0;
+    }
+
+    .slot-meta{
+      font-size:.82rem;
+      color:#888;
+    }
+
+    /* --------------------------------------------------
+      METRICS
+    -------------------------------------------------- */
+
+    .metrics-grid{
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:12px;
+      margin-top:12px;
+    }
+
+    .metric{
+      background:#121212;
+      border:1px solid #262626;
+      border-radius:8px;
+      padding:14px;
+      text-align:center;
+    }
+
+    .metric-value{
+      font-size:1.6rem;
+      font-weight:700;
+    }
+
+    .metric-label{
+      margin-top:4px;
+      font-size:.72rem;
+      color:#777;
+      text-transform:uppercase;
+    }
+
+    /* --------------------------------------------------
+      META INFO
+    -------------------------------------------------- */
+
+    .meta-grid{
+      display:grid;
+      grid-template-columns:repeat(2,1fr);
+      gap:10px;
+      margin-top:14px;
+    }
+
+    .meta-item{
+      color:#888;
+      font-size:.82rem;
+    }
+
+    /* --------------------------------------------------
+      CONTROLS
+    -------------------------------------------------- */
+
+    .controls{
+      display:flex;
+      gap:12px;
+      flex-wrap:wrap;
+    }
+
+    button{
+      min-width:140px;
+      height:42px;
+
+      border:none;
+      border-radius:8px;
+
+      cursor:pointer;
+
+      font-weight:600;
+
+      background:#2d6cdf;
+      color:#fff;
+    }
+
+    button:hover{
+      background:#3c7dff;
+    }
+
+    button.secondary{
+      background:#444;
+      color:white;
+    }
+
+    button.secondary:hover{
+      background:#555;
+    }
+
+    /* --------------------------------------------------
+      STATUS STATES
+    -------------------------------------------------- */
+
+    .slot-status-active{
+      color:#1ddf8b;
+      font-weight:600;
+    }
+
+    .slot-status-inactive{
+      color:#ff5c5c;
+      font-weight:600;
+    }
+
+    /* --------------------------------------------------
+      MISMATCH
+    -------------------------------------------------- */
+
+    .slot-mismatch{
+      color:#ffb347;
+      animation:pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse{
+      0%  { opacity:1;   }
+      50% { opacity:.65; }
+      100%{ opacity:1;   }
+    }
+
+    /* --------------------------------------------------
+      UTILITY
+    -------------------------------------------------- */
+
+    .hidden{
+      display:none !important;
+    }
+
+    /* --------------------------------------------------
+      RESPONSIVE
+    -------------------------------------------------- */
+
+    @media(max-width:900px){
+
+      .metrics-grid{
+        grid-template-columns:repeat(2,1fr);
       }
-      .slot-row {
-        gap: 8px;
+
+      #video{
+        height:55vh;
+        min-height:300px;
       }
-      .slot-card {
-        font-size: 13px;
+
+    }
+
+    @media(max-width:600px){
+
+      .metrics-grid{
+        grid-template-columns:1fr;
       }
-      #video {
-        max-height: 48vh;
+
+      .meta-grid{
+        grid-template-columns:1fr;
       }
+
+      .stream-header{
+        flex-direction:column;
+        align-items:flex-start;
+      }
+
+      .controls{
+        flex-direction:column;
+      }
+
+      button{
+        width:100%;
+      }
+
     }
   </style>
 </head>
 <body>
-  <style>
-    *,*::before,*::after{box-sizing:border-box}
-    nav-bar{display:flex;background:#161616;border-bottom:1px solid #2a2a2a;
-            padding:8px 16px;align-items:center;gap:10px;flex-wrap:wrap}
-  </style>
-  <div style="background:#161616;border-bottom:1px solid #222;padding:9px 16px;
-              display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-    <span style="font-weight:700;color:#1ddf8b;margin-right:auto;font-size:.95rem">🐐 DEONAR AI</span>
-    <a href="/" style="color:#1ddf8b;text-decoration:none;font-size:.82rem;padding:4px 10px;
-       background:#1ddf8b18;border-radius:4px">Stream</a>
-    <a href="/dashboard" style="color:#aaa;text-decoration:none;font-size:.82rem;padding:4px 10px;
-       border-radius:4px">Dashboard</a>
-    <a href="/slots" style="color:#aaa;text-decoration:none;font-size:.82rem;padding:4px 10px;
-       border-radius:4px">Slots</a>
+  <div class="navbar">
+
+    <span class="navbar-brand">
+      🐐 DEONAR AI
+    </span>
+
+    <a href="/" class="nav-link active">
+      Stream
+    </a>
+
+    <a href="/dashboard" class="nav-link">
+      Dashboard
+    </a>
+
+    <a href="/slots" class="nav-link">
+      Slots
+    </a>
+
   </div>
-  <div class="container">
-    <h3>Live Stream</h3>
-    <video id="video" autoplay playsinline controls muted></video>
-    <!-- Slot Info Card -->
-    <div id="slot-card" class="slot-card hidden">
-    <div class="slot-row slot-title">
-        SLOT: <span id="slot-id">-</span>
-    </div>
+  <div class="main">
+    <div class="stream-layout">
+      <div class="stream-card">
+        <div class="stream-header">
 
-    <div class="slot-row">
-        VENDOR ID: <span id="slot-vendor-id">-</span>
-        VENDOR: <span id="slot-vendor-name">-</span>
-    </div>
+          <div class="stream-title">
+            Live Stream
+          </div>
 
-    <div class="slot-row">
-        START: <span id="slot-start">-</span>
-        END: <span id="slot-end">-</span>
-    </div>
+          <span id="status" class="status-pill">
+            Connecting...
+          </span>
 
-    <div class="slot-divider"></div>
+        </div>
 
-    <div class="slot-row slot-counts">
-        UP: <span id="slot-up">0</span>
-        DOWN: <span id="slot-down">0</span>
-        TOTAL: <span id="slot-total">0</span>
-        DECLARED: <span id="slot-declared">-</span>
-    </div>
+        <video id="video"
+              autoplay
+              playsinline
+              controls
+              muted></video>
 
-    <div class="slot-divider"></div>
+      </div>
 
-    <div class="slot-row slot-meta">
-        STATUS: <span id="slot-status">-</span>
-        START_GC: <span id="slot-start-gc">-</span>
-        END_GC: <span id="slot-end-gc">-</span>
-        DURATION: <span id="slot-duration">-</span>
-    </div>
-    </div>
-    <div class="controls">
-      <button id="btn_start">Reconnect</button>
-      <button id="btn_screenshot" class="secondary">Screenshot</button>
-      <button id="btn_quit" class="secondary">Quit</button>
-      <span id="status">idle</span>
+      <!-- Slot Info Card -->
+      <div id="slot-card" class="slot-card hidden">
+        <div class="slot-row slot-title">
+            SLOT: <span id="slot-id">-</span>
+        </div>
+
+        <div class="slot-row">
+            VENDOR ID: <span id="slot-vendor-id">-</span>
+            VENDOR: <span id="slot-vendor-name">-</span>
+        </div>
+
+        <div class="slot-row">
+            START: <span id="slot-start">-</span>
+            END: <span id="slot-end">-</span>
+        </div>
+
+        <div class="slot-divider"></div>
+
+        <div class="metrics-grid">
+
+          <div class="metric">
+            <div class="metric-value" id="slot-up">0</div>
+            <div class="metric-label">UP</div>
+          </div>
+
+          <div class="metric">
+            <div class="metric-value" id="slot-down">0</div>
+            <div class="metric-label">DOWN</div>
+          </div>
+
+          <div class="metric">
+            <div class="metric-value" id="slot-total">0</div>
+            <div class="metric-label">TOTAL</div>
+          </div>
+
+          <div class="metric">
+            <div class="metric-value" id="slot-declared">0</div>
+            <div class="metric-label">DECLARED</div>
+          </div>
+
+        </div>
+
+        <div class="slot-divider"></div>
+
+        <div class="slot-row slot-meta">
+            STATUS: <span id="slot-status">-</span>
+            START_GC: <span id="slot-start-gc">-</span>
+            END_GC: <span id="slot-end-gc">-</span>
+            DURATION: <span id="slot-duration">-</span>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="btn_start">Reconnect</button>
+        <button id="btn_screenshot" class="secondary">Screenshot</button>
+        <button id="btn_quit" class="secondary">Quit</button>
+      </div>
+
     </div>
   </div>
 
