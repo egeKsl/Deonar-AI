@@ -203,35 +203,35 @@ Counts entries and exits within a configurable region of interest, suitable for 
 * YOLOv11
 * YOLOv12
 
-### Tracking
+### > Tracking
 
 * ByteTrack
 * BoT-SORT
 
-### Computer Vision
+### > Computer Vision
 
 * OpenCV
 * NumPy
 
-### Live Streaming
+### > Live Streaming
 
 * WebRTC
 * aiortc
 * aiohttp
 
-### Backend & APIs
+### > Backend & APIs
 
 * FastAPI
 * Uvicorn
 * Pydantic
 
-### Monitoring & Logging
+### > Monitoring & Logging
 
 * Rich
 * JSONL Logging
 * CSV Reporting
 
-### Infrastructure & Training
+### > Infrastructure & Training
 
 * CVAT
 * Vast.ai (RTX 5090)
@@ -434,7 +434,7 @@ outputs/runs/<run_id>/
 
 ### Project Lead
 
-**Ubada Ghawte**
+**Ubada Ghavte**
 
 AI Engineer & Full Stack Developer
 
