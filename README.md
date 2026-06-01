@@ -22,7 +22,7 @@ Built for Deonar Abattoir, Mumbai
 
 ---
 
-## Overview
+# Overview
 
 DEONAR AI is a production-grade livestock counting platform developed to automate animal counting operations at Deonar Abattoir, Mumbai.
 
@@ -42,7 +42,7 @@ The system combines YOLO-based detection, multi-object tracking, motion-aware co
 
 ---
 
-## System Overview
+# System Overview
 
 <p align="center">
   <img src="assets/architecture/hero-overview.png" width="100%">
@@ -86,7 +86,7 @@ Reports & Audit Trail
 
 ---
 
-## Counting Intelligence Engine
+# Counting Intelligence Engine
 
 <p align="center">
   <img src="assets/architecture/counting-engine.png" width="100%">
@@ -111,7 +111,7 @@ This architecture significantly reduces false counts caused by occlusion, jitter
 
 ---
 
-## Deployment Architecture
+# Deployment Architecture
 
 <p align="center">
   <img src="assets/architecture/deployment-architecture.png" width="100%">
@@ -125,7 +125,7 @@ This architecture significantly reduces false counts caused by occlusion, jitter
 
 ---
 
-## Technology Stack
+# Technology Stack
 
 ### AI & Deep Learning
 
@@ -171,7 +171,7 @@ This architecture significantly reduces false counts caused by occlusion, jitter
 
 ---
 
-## Dataset & Training
+# Dataset & Training
 
 | Metric                  | Value             |
 | ----------------------- | ----------------- |
@@ -185,7 +185,7 @@ The dataset was collected and annotated from real operational environments at De
 
 ---
 
-## Project Structure
+# Project Structure
 
 ```text
 ├── main.py                          # Entry point
@@ -212,7 +212,7 @@ The dataset was collected and annotated from real operational environments at De
 
 ---
 
-## Results
+# Results
 
 | Metric             | Performance              |
 | ------------------ | ------------------------ |
@@ -225,7 +225,7 @@ The dataset was collected and annotated from real operational environments at De
 
 ---
 
-## Real-World Deployment
+# Real-World Deployment
 
 The platform was developed and tested for livestock counting operations at Deonar Abattoir, Mumbai.
 
@@ -240,7 +240,7 @@ Key capabilities include:
 
 ---
 
-## Contributors
+# Contributors
 
 **Ubada Ghawte**
 AI Engineer & Project Lead
@@ -261,7 +261,7 @@ MI Tradings & General Suppliers
 
 ---
 
-## License
+# License
 
 This project is released under the Apache License 2.0.
 For details, see the LICENSE file included in the repository.
