@@ -26,19 +26,19 @@ Built for Deonar Abattoir, Mumbai
 
 DEONAR AI is a production-grade livestock counting platform developed to automate animal counting operations at Deonar Abattoir, Mumbai.
 
-The system combines YOLO-based detection, multi-object tracking, motion-aware counting intelligence, vendor session management, and real-time monitoring to replace manual counting processes with an accurate, auditable, and scalable AI solution.
+The platform combines computer vision, object tracking, counting intelligence, vendor session management, and real-time streaming to replace manual counting processes with an accurate, auditable, and scalable AI solution.
 
-### Highlights
+### Key Highlights
 
-* Real-time CCTV counting
-* YOLOv11 & YOLOv12 detection models
-* ByteTrack & BoT-SORT tracking
+* Real-time livestock counting from CCTV feeds
+* YOLOv11 & YOLOv12 object detection
+* ByteTrack & BoT-SORT multi-object tracking
 * Dual-line counting intelligence
-* Vendor slot management
-* WebRTC live monitoring
+* Vendor slot management system
+* Browser-based WebRTC live monitoring
 * Multi-threaded processing pipeline
-* CSV audit trail & reporting
-* Production deployment ready
+* CSV audit trail and reporting
+* Production-ready deployment architecture
 
 ---
 
@@ -56,6 +56,57 @@ The system combines YOLO-based detection, multi-object tracking, motion-aware co
 
 ---
 
+## Demo
+
+🎥 Full demonstration video:
+
+```text
+assets/demo/deonar-ai-demo.mp4
+```
+
+The demo showcases:
+
+* Live CCTV ingestion
+* Real-time goat detection
+* Multi-object tracking
+* Counting engine decisions
+* Vendor session workflow
+* Audit report generation
+
+---
+
+## User Interface
+
+<table>
+<tr>
+
+<td width="50%">
+
+### Live Monitoring Dashboard
+
+<img src="assets/screenshots/live-dashboard.png">
+
+</td>
+
+<td width="50%">
+
+### Slot Management Console
+
+<img src="assets/screenshots/slot-management.png">
+
+</td>
+
+</tr>
+</table>
+
+<p align="center">
+<i>
+Monitor live counting sessions, track vendor operations, and access audit-ready reports through a centralized interface.
+</i>
+</p>
+
+---
+
 ## Complete System Architecture
 
 <p align="center">
@@ -64,23 +115,23 @@ The system combines YOLO-based detection, multi-object tracking, motion-aware co
 
 <p align="center">
   <i>
-  Complete system architecture showing video ingestion, AI processing, counting intelligence, vendor management and reporting.
+  Complete architecture showing video ingestion, AI processing, counting intelligence, vendor management, and reporting.
   </i>
 </p>
 
 ### Core Workflow
 
 ```text
-CCTV Streams
-      ↓
+CCTV Feed / Video
+          ↓
 YOLO Detection
-      ↓
+          ↓
 Multi-Object Tracking
-      ↓
+          ↓
 Counting Intelligence
-      ↓
+          ↓
 Vendor Slot Mapping
-      ↓
+          ↓
 Reports & Audit Trail
 ```
 
@@ -94,7 +145,7 @@ Reports & Audit Trail
 
 <p align="center">
   <i>
-  Motion-aware counting engine designed to ensure each animal is counted exactly once.
+  Motion-aware counting engine designed to ensure every animal is counted exactly once.
   </i>
 </p>
 
@@ -102,12 +153,24 @@ The counting engine combines:
 
 * Object Detection
 * Multi-Object Tracking
-* Dual-Line Verification
 * Motion Validation
 * Direction Analysis
 * Count Confirmation Logic
+* Dual-Line Verification
 
-This architecture significantly reduces false counts caused by occlusion, jitter, direction changes, and tracking ID switches.
+### Supported Counting Modes
+
+#### Single-Line Counting
+
+Counts animals crossing a single virtual counting line with anti-flicker validation and cooldown protection.
+
+#### Dual-Line Counting (Recommended)
+
+Uses Line A → Line B verification combined with motion validation and direction consistency checks to maximize counting accuracy.
+
+#### Zone Counting
+
+Counts entries and exits within a configurable region of interest, suitable for pen monitoring and wider gate scenarios.
 
 ---
 
@@ -119,9 +182,15 @@ This architecture significantly reduces false counts caused by occlusion, jitter
 
 <p align="center">
   <i>
-  Production deployment architecture used for real-time livestock counting operations.
+  Production deployment architecture supporting local and remote monitoring.
   </i>
 </p>
+
+### Live Streaming
+
+The platform streams annotated video through WebRTC and can be deployed on a remote server for browser-based monitoring.
+
+Operators can securely monitor live counting sessions from anywhere without requiring direct access to the processing machine.
 
 ---
 
@@ -162,12 +231,41 @@ This architecture significantly reduces false counts caused by occlusion, jitter
 * JSONL Logging
 * CSV Reporting
 
-### Infrastructure
+### Infrastructure & Training
 
 * CVAT
 * Vast.ai (RTX 5090)
 * HuggingFace Hub
 * Tailscale
+
+---
+
+## Pre-Trained Models
+
+Models were trained on a custom dataset of more than 20,000 annotated livestock images collected under real operational conditions at Deonar Abattoir.
+
+| Model         | mAP@50 | mAP@50-95 | Size    |
+| ------------- | ------ | --------- | ------- |
+| YOLOv11 Nano  | 98.99% | 78.05%    | ~5.4 MB |
+| YOLOv11 Small | 99.05% | 79.00%    | ~19 MB  |
+| YOLOv12 Nano  | 99.04% | 78.12%    | ~5.4 MB |
+| YOLOv12 Small | 99.09% | 79.43%    | ~19 MB  |
+
+### Download Models
+
+Models are hosted on HuggingFace:
+
+```text
+https://huggingface.co/ubada11/goat-detection-yolov11
+```
+
+Download the preferred model and place it inside:
+
+```text
+models/
+```
+
+before starting the application.
 
 ---
 
@@ -181,34 +279,7 @@ This architecture significantly reduces false counts caused by occlusion, jitter
 | Detection Models        | YOLOv11 & YOLOv12 |
 | Validation Accuracy     | ~99% mAP@50       |
 
-The dataset was collected and annotated from real operational environments at Deonar Abattoir under varying lighting, density, camera angles and environmental conditions.
-
----
-
-## Project Structure
-
-```text
-├── main.py                          # Entry point
-├── configs/config.yaml              # All configuration (single source of truth)
-├── models/                          # Model weights (download from HuggingFace)
-├── src/
-│   ├── app/                         # Pipeline runners (single & multi-threaded)
-│   ├── capture/                     # Threaded RTSP capture
-│   ├── runtime/                     # Frame pacing controller
-│   ├── infer/                       # Model loading + YOLO inference
-│   ├── counting/                    # Counting logic (line / dual-line / zone)
-│   ├── display/                     # Drawing, WebRTC server, display worker
-│   ├── slots/                       # Slot management + REST API
-│   ├── viz/                         # HUD, animations, color management
-│   ├── io/                          # CSV writers
-│   ├── geometry/                    # ROI math, line building
-│   ├── utils/                       # Logger, metrics, video recorder
-│   ├── runtime_configs/             # Config loader + tracker YAML builder
-│   └── setup_installer_enhanced/    # Custom CUDA/PyTorch installer CLI
-└── utils/
-    ├── fake_producer.bat            # Fake RTSP stream for testing
-    └── upload_to_huggingface.py     # Model upload script
-```
+The dataset was collected and annotated directly from operational livestock counting environments under varying camera angles, lighting conditions, densities, and weather conditions.
 
 ---
 
@@ -227,23 +298,136 @@ The dataset was collected and annotated from real operational environments at De
 
 ## Real-World Deployment
 
-The platform was developed and tested for livestock counting operations at Deonar Abattoir, Mumbai.
+The platform was designed and tested for livestock counting operations at Deonar Abattoir, Mumbai.
 
-Key capabilities include:
+Supported capabilities include:
 
 * Automated livestock counting
-* Vendor-wise session management
-* Real-time monitoring
+* Vendor session management
+* Browser-based live monitoring
+* Remote deployment support
 * Audit-ready reporting
 * Operational analytics
-* Production deployment support
+
+---
+
+## Project Structure
+
+```text
+├── assets/
+│   ├── architecture/
+│   ├── screenshots/
+│   ├── demo/
+│   └── banner/
+│
+├── configs/
+├── models/
+├── outputs/
+├── src/
+│   ├── capture/
+│   ├── infer/
+│   ├── counting/
+│   ├── display/
+│   ├── slots/
+│   ├── geometry/
+│   ├── runtime/
+│   └── utils/
+│
+├── main.py
+├── pyproject.toml
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Installation
+
+### Recommended Setup
+
+```bash
+git clone https://github.com/Ubada12/Deonar-AI.git
+
+cd Deonar-AI
+
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# Linux / macOS
+source .venv/bin/activate
+
+pip install -e .
+```
+
+### Enhanced Installer
+
+The project includes an enhanced installer capable of:
+
+* CUDA detection
+* PyTorch installation
+* NVIDIA monitoring dependencies
+* Environment validation
+
+```bash
+setup-installer \
+  --install-cuda-python \
+  --install-nvidia-ml \
+  --auto-detect-torch
+```
+
+---
+
+## Quick Start
+
+Configure your model and video source in:
+
+```text
+configs/config.yaml
+```
+
+Run:
+
+```bash
+python main.py
+```
+
+The application supports:
+
+* RTSP streams
+* CCTV cameras
+* Local video files
+
+---
+
+## Generated Outputs
+
+Every run generates structured outputs including:
+
+* Event Logs
+* Count Time Series
+* Decision Traces
+* Performance Metrics
+* Annotated Videos
+* Vendor Session Reports
+* Summary Reports
+
+Output structure:
+
+```text
+outputs/runs/<run_id>/
+```
 
 ---
 
 ## Contributors
 
+### Project Lead
+
 **Ubada Ghawte**
-AI Engineer & Project Lead
+
+AI Engineer & Full Stack Developer
 
 ### Team Members
 
@@ -263,5 +447,6 @@ MI Tradings & General Suppliers
 
 ## License
 
-This project is released under the Apache License 2.0.
-For details, see the LICENSE file included in the repository.
+Licensed under the Apache License 2.0.
+
+See the LICENSE file for details.
