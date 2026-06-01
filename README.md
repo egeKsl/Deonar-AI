@@ -432,24 +432,30 @@ outputs/runs/<run_id>/
 
 # Contributors
 
-### Project Lead
-
-**[Ubada Ghawte](https://github.com/Ubada12)**  
-Lead ML Developer & Full Stack Developer
-
-### Team Members
-
-- Adil
-- Raafe
-
-### Academic Guide
-
-**Prof. Farhan**  
-Rizvi College of Engineering
-
-### Industry Partner
-
-**MI Tradings & General Suppliers**
+<table>
+<tr>
+<td align="center" width="200px">
+<b>🧑‍💼 Project Lead</b><br><br>
+<a href="https://github.com/Ubada12"><b>Ubada Ghawte</b></a><br>
+<sub>Lead ML Developer & Full Stack Developer</sub>
+</td>
+<td align="center" width="200px">
+<b>👥 Team Members</b><br><br>
+<b>Adil</b><br>
+<b>Raafe</b>
+</td>
+<td align="center" width="200px">
+<b>🎓 Academic Guide</b><br><br>
+<b>Prof. Farhan</b><br>
+<sub>Rizvi College of Engineering</sub>
+</td>
+<td align="center" width="200px">
+<b>🏭 Industry Partner</b><br><br>
+<b>MI Tradings &</b><br>
+<b>General Suppliers</b>
+</td>
+</tr>
+</table>
 
 ---
 
