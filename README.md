@@ -432,25 +432,16 @@ outputs/runs/<run_id>/
 
 # Contributors
 
-### Project Lead
+### Project Lead - **Ubada Ghavte** (Lead ML Developer)
 
-**Ubada Ghavte**
-
-AI Engineer & Full Stack Developer
-
-### Team Members
-
-* Adil
-* Raafe
+### Team Members - Adil Raafe
 
 ### Academic Guide
 
 * Prof. Farhan
 * Rizvi College of Engineering
 
-### Industry Partner
-
-MI Tradings & General Suppliers
+### Industry Partner - MI Tradings & General Suppliers
 
 ---
 
