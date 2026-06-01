@@ -201,16 +201,10 @@ What the team came away with:
 
 **The experience letter:** MI Tradings provided an official R&D experience letter confirming 12 months of work on a BMC AI project. The first real work experience, earned on a zero-budget project that never shipped to production.
 
----
-
-*The system still works. The code is clean. The models are accurate. The pipeline runs on consumer hardware. Somewhere, there are 20,000 annotated images of goats from Deonar that took months to collect and label. The project never went to production, but everything that was built here is real.*
-
----
-
 ## Project Timeline
 
 <p align="center">
-  <img src="../assets/architecture/project-timeline.png" width="100%">
+  <img src="assets/architecture/project-timeline.png" width="100%">
 </p>
 
 <p align="center">
@@ -218,6 +212,8 @@ What the team came away with:
 From problem discovery and dataset collection to model training, deployment and field validation.
 </i>
 </p>
+
+*The system still works. The code is clean. The models are accurate. The pipeline runs on consumer hardware. Somewhere, there are 20,000 annotated images of goats from Deonar that took months to collect and label. The project never went to production, but everything that was built here is real.*
 
 ---
 
