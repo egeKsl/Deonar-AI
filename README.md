@@ -160,15 +160,15 @@ The counting engine combines:
 
 ### Supported Counting Modes
 
-#### Single-Line Counting
+#### 1) Single-Line Counting
 
 Counts animals crossing a single virtual counting line with anti-flicker validation and cooldown protection.
 
-#### Dual-Line Counting (Recommended)
+#### 2) Dual-Line Counting (Recommended)
 
 Uses Line A → Line B verification combined with motion validation and direction consistency checks to maximize counting accuracy.
 
-#### Zone Counting
+#### 3) Zone Counting
 
 Counts entries and exits within a configurable region of interest, suitable for pen monitoring and wider gate scenarios.
 
