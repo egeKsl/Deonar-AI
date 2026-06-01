@@ -188,9 +188,9 @@ Counts entries and exits within a configurable region of interest, suitable for 
 
 ### Live Streaming
 
-The platform streams annotated video through WebRTC and can be deployed on a remote server for browser-based monitoring.
+- The platform streams annotated video through WebRTC and can be deployed on a remote server for browser-based monitoring.
 
-Operators can securely monitor live counting sessions from anywhere without requiring direct access to the processing machine.
+- Operators can securely monitor live counting sessions from anywhere without requiring direct access to the processing machine.
 
 ---
 
