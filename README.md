@@ -441,8 +441,8 @@ outputs/runs/<run_id>/
 </td>
 <td align="center" width="200px">
 <b>👥 Team Members</b><br><br>
-<b>Adil</b><br>
-<b>Raafe</b>
+<b> ➤ Adil</b><br>
+<b> ➤ Raafe</b>
 </td>
 <td align="center" width="200px">
 <b>🎓 Academic Guide</b><br><br>
