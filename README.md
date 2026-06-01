@@ -42,7 +42,7 @@ The platform combines computer vision, object tracking, counting intelligence, v
 
 ---
 
-## System Overview
+# System Overview
 
 <p align="center">
   <img src="assets/architecture/hero-overview.png" width="100%">
