@@ -382,7 +382,7 @@ setup-installer \
 
 * Ensure that the model path specified in `configs/config.yaml` matches the model file you placed in the `models/` directory. Incorrect paths or model names will prevent the application from starting correctly.
 
-* The default config.yaml is configured for beginners and is suitable for getting started quickly with the project. However, if you plan to use Deonar AI for a different deployment environment, camera setup, counting scenario, custom model, RTSP stream, or any other use case, you should review and update the configuration values according to your requirements.
+* The default `config.yaml` is configured for beginners and is suitable for getting started quickly with the project. However, if you plan to use Deonar AI for a different deployment environment, camera setup, counting scenario, custom model, RTSP stream, or any other use case, you should review and update the configuration values according to your requirements.
 
 * Always verify settings such as model paths, video sources, counting lines, tracking parameters, output locations, and streaming options in `configs/config.yaml` before deployment to ensure the system behaves as expected in your environment.
 
