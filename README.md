@@ -437,21 +437,15 @@ outputs/runs/<run_id>/
 **[Ubada Ghawte](https://github.com/Ubada12)**  
 Lead ML Developer & Full Stack Developer
 
----
-
 ### Team Members
 
 - Adil
 - Raafe
 
----
-
 ### Academic Guide
 
 **Prof. Farhan**  
 Rizvi College of Engineering
-
----
 
 ### Industry Partner
 
