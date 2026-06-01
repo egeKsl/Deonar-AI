@@ -882,6 +882,81 @@ def run_threaded(args):
     if webrtc_server and slot_manager:
         webrtc_server._slot_manager = slot_manager  # inject slot manager reference for WebRTCServer's /health endpoint
 
+    # ── Wire live status provider into WebRTC server ──────────────────────────
+    # Reads only in-memory values; zero pipeline overhead.
+    if webrtc_server is not None:
+        def _get_live_status():
+            status = {}
+            try:
+                st = display.state if display is not None else None
+                status["up"]    = int(st.up_count)   if st else 0
+                status["down"]  = int(st.down_count) if st else 0
+                status["total"] = int(st.up_count + st.down_count) if st else 0
+            except Exception:
+                status["up"] = status["down"] = status["total"] = 0
+
+            try:
+                infer_stats = infer.get_stats() if (infer is not None and hasattr(infer, "get_stats")) else {}
+                status["infer_fps"] = round(float(infer_stats.get("avg_infer_fps", 0.0)), 1)
+            except Exception:
+                status["infer_fps"] = 0.0
+
+            try:
+                fps_buf = getattr(display, "_e2e_fps_buf", None)
+                if fps_buf and len(fps_buf) > 0:
+                    status["e2e_fps"] = round(sum(fps_buf) / len(fps_buf), 1)
+                else:
+                    status["e2e_fps"] = 0.0
+            except Exception:
+                status["e2e_fps"] = 0.0
+
+            try:
+                def _alive(obj):
+                    try:
+                        return bool(getattr(obj, "is_alive", lambda: False)())
+                    except Exception:
+                        return False
+                status["threads"] = {
+                    "capture":  _alive(capture),
+                    "pacer":    _alive(pacer._thread) if (pacer and hasattr(pacer, "_thread")) else False,
+                    "infer":    _alive(infer),
+                    "display":  _alive(display),
+                    "slot_api": _alive(slot_api) if slot_api else None,
+                }
+            except Exception:
+                status["threads"] = {}
+
+            try:
+                def _qinfo(q):
+                    if q is None:
+                        return {"fill": 0, "max": 0}
+                    return {
+                        "fill": q.qsize() if hasattr(q, "qsize") else 0,
+                        "max":  q.maxsize if hasattr(q, "maxsize") else 0,
+                    }
+                status["queues"] = {
+                    "cap":    _qinfo(capture_queue),
+                    "pacing": _qinfo(pacing_out_q),
+                    "result": _qinfo(result_queue),
+                }
+            except Exception:
+                status["queues"] = {}
+
+            return status
+
+        try:
+            webrtc_server.set_status_provider(_get_live_status)
+            log.debug("RUNNER", "Status provider wired into WebRTC server")
+        except Exception as e:
+            log.warn("RUNNER", f"Failed to set status provider: {e}")
+
+        # Pass the actual configured slot API port so /slots page uses the right URL
+        try:
+            configured_slot_port = int(getattr(args, "slot_api_port", 8090))
+            webrtc_server.set_slot_api_port(configured_slot_port)
+        except Exception as e:
+            log.warn("RUNNER", f"Failed to set slot API port on WebRTC server: {e}")
+
     # --------------------------------------------------
     # 7) Monitor + graceful teardown
     # --------------------------------------------------
@@ -913,3 +988,4 @@ def run_threaded(args):
     )
 
     log.info("RUNNER", "Threaded pipeline execution complete.")
+

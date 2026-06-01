@@ -137,9 +137,14 @@ class SlotManager:
 
         self._current_slot_dir: Optional[Path] = None
 
-        # 🧠 lifecycle memory (NEW)
+        # 🧠 lifecycle memory
         self._last_started_slot_id: Optional[str] = None
         self._last_stopped_slot_id: Optional[str] = None
+
+        # In-memory history of completed slots (appended on stop, max 50)
+        # Each entry is the slot snapshot dict at the time of completion.
+        self._history: list = []
+        self._history_max = 50
 
     @staticmethod
     def _format_slot_dir_name(slot_id: str, ts: datetime) -> str:
@@ -339,6 +344,16 @@ class SlotManager:
             f"(counted={slot.slot_count}, status={slot.status})",
         )
 
+        # Append snapshot to history (bounded, newest last)
+        try:
+            entry = slot.snapshot()
+            entry["summary_status"] = summary_status
+            self._history.append(entry)
+            if len(self._history) > self._history_max:
+                self._history = self._history[-self._history_max:]
+        except Exception:
+            pass
+
         # Fire slot stop callbacks
         for cb in self._on_slot_stop:
             try:
@@ -394,17 +409,19 @@ class SlotManager:
             return event
 
     def abort_active_slot_if_any(self):
+        # Capture slot_id inside the lock to avoid TOCTOU race.
         with self._lock:
             if not self._active_slot:
                 return
+            slot_id_to_abort = self._active_slot.slot_id
 
         log.warn(
             "SLOT",
-            f"Aborting active slot {self._active_slot.slot_id} due to shutdown",
+            f"Aborting active slot {slot_id_to_abort} due to shutdown",
         )
 
         fake_payload = SlotStopPayload(
-            slot_id=self._active_slot.slot_id,
+            slot_id=slot_id_to_abort,
             stop_type="ABORTED",
             stopped_by="system",
             # Keep shutdown/abort path timezone-aware and aligned with API paths.
@@ -439,6 +456,11 @@ class SlotManager:
     def get_csv_writer(self) -> Optional[SlotCsvWriter]:
         with self._lock:
             return self._csv_writer
+
+    def get_history(self) -> list:
+        """Return completed slot snapshots, newest first (max 50 entries)."""
+        with self._lock:
+            return list(reversed(self._history))
 
     def get_public_state(self) -> dict:
         """Public-facing slot API state used by lightweight status endpoints."""

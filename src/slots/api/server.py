@@ -9,6 +9,7 @@ from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.slots.api.routes import create_slot_router
 from src.utils.logger import log
@@ -163,6 +164,15 @@ def start_slot_api_if_enabled(config: dict, slot_manager) -> Optional[SlotApiRun
         version="1.0",
         docs_url="/docs",
         redoc_url=None,
+    )
+
+    # Allow browser dashboard pages on the WebRTC port (8081) to call
+    # the slot API on port 8090 without CORS errors.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
     )
 
     @app.get("/health")
