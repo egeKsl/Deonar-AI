@@ -196,42 +196,42 @@ Counts entries and exits within a configurable region of interest, suitable for 
 
 # Technology Stack
 
-### > AI & Deep Learning
+### ➤ AI & Deep Learning
 
 * PyTorch
 * Ultralytics
 * YOLOv11
 * YOLOv12
 
-### > Tracking
+### ➤ Tracking
 
 * ByteTrack
 * BoT-SORT
 
-### > Computer Vision
+### ➤ Computer Vision
 
 * OpenCV
 * NumPy
 
-### > Live Streaming
+### ➤ Live Streaming
 
 * WebRTC
 * aiortc
 * aiohttp
 
-### > Backend & APIs
+### ➤ Backend & APIs
 
 * FastAPI
 * Uvicorn
 * Pydantic
 
-### > Monitoring & Logging
+### ➤ Monitoring & Logging
 
 * Rich
 * JSONL Logging
 * CSV Reporting
 
-### > Infrastructure & Training
+### ➤ Infrastructure & Training
 
 * CVAT
 * Vast.ai (RTX 5090)
