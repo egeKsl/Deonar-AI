@@ -196,7 +196,7 @@ Counts entries and exits within a configurable region of interest, suitable for 
 
 # Technology Stack
 
-### AI & Deep Learning
+### -> AI & Deep Learning
 
 * PyTorch
 * Ultralytics
