@@ -1367,7 +1367,7 @@ tr:hover td{{background:#1e1e1e}}
             placeholder="e.g. Ubada"
             :disabled="slotActive || starting">
       </div>
-      <button class="btn btn-start" :disabled="slotActive || starting || !form.slot_id.trim()"
+      <button class="btn btn-start" :disabled="slotActive || starting || !form.slot_id.trim() || !form.vendor_id.trim() || !form.vendor_name.trim() || !form.declared_count.trim() || !form.started_by.trim()"
               @click="startSlot()"
               x-text="starting ? 'Starting…' : '▶  Start Session'"></button>
       <div class="msg" :class="{{show: startMsg, ok: startOk, err: !startOk}}"
