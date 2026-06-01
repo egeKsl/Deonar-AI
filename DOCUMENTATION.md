@@ -232,7 +232,7 @@ Detection alone (YOLO) is not enough. Tracking alone is not enough. A line cross
 This system layers solutions on top of each other:
 
 <p align="center">
-  <img src="../assets/architecture/system-architecture.png" width="100%">
+  <img src="assets/architecture/system-architecture.png" width="100%">
 </p>
 
 <p align="center">
@@ -274,7 +274,7 @@ A goat that hesitates near the line, partially crosses and backs up, or is occlu
 ## 11. Live Pipeline — Thread Architecture
 
 <p align="center">
-  <img src="../assets/architecture/multi-thread-pipeline.png" width="100%">
+  <img src="assets/architecture/multi-thread-pipeline.png" width="100%">
 </p>
 
 <p align="center">
@@ -399,7 +399,7 @@ This means the live annotated feed is viewable from any browser on the same netw
 ### Live Monitoring Interface
 
 <p align="center">
-  <img src="../assets/screenshots/live-monitoring-ui.png" width="100%">
+  <img src="assets/screenshots/live-monitoring-ui.png" width="100%">
 </p>
 
 <p align="center">
@@ -581,7 +581,7 @@ Line B crossing → if A was missed for this track → COMMIT on B (recovery)
 In practice, **Recover mode is used in production** because missed crossings hurt accuracy more than the marginal increase in false positives that Verify mode prevents.
 
 <p align="center">
-  <img src="../assets/architecture/counting-engine.png" width="100%">
+  <img src="assets/architecture/counting-engine.png" width="100%">
 </p>
 
 <p align="center">
@@ -611,7 +611,7 @@ The slot system allows an operator to partition the global count into per-vendor
 ### Slot Management Interface
 
 <p align="center">
-  <img src="../assets/screenshots/slot-management-ui.png" width="100%">
+  <img src="assets/screenshots/slot-management-ui.png" width="100%">
 </p>
 
 <p align="center">
@@ -1087,7 +1087,7 @@ Zone counting does not use the motion intent analyzer — direction is determine
 ## 32. Data Flow — From Pixel to CSV Row
 
 <p align="center">
-  <img src="../assets/architecture/end-to-end-dataflow.png" width="100%">
+  <img src="assets/architecture/end-to-end-dataflow.png" width="100%">
 </p>
 
 <p align="center">
