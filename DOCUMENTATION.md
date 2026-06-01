@@ -595,7 +595,7 @@ In practice, **Recover mode is used in production** because missed crossings hur
 The slot system allows an operator to partition the global count into per-vendor sessions.
 
 <p align="center">
-  <img src="../assets/architecture/slot-management.png" width="100%">
+  <img src="assets/architecture/slot-management.png" width="100%">
 </p>
 
 <p align="center">
