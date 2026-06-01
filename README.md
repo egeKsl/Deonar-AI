@@ -22,7 +22,7 @@ Built for Deonar Abattoir, Mumbai
 
 ---
 
-## Overview
+# Overview
 
 DEONAR AI is a production-grade livestock counting platform developed to automate animal counting operations at Deonar Abattoir, Mumbai.
 
@@ -56,7 +56,7 @@ The platform combines computer vision, object tracking, counting intelligence, v
 
 ---
 
-## Demo
+# Demo
 
 🎥 Full demonstration video:
 
@@ -75,7 +75,7 @@ The demo showcases:
 
 ---
 
-## User Interface
+# User Interface
 
 <table>
 <tr>
@@ -107,7 +107,7 @@ Monitor live counting sessions, track vendor operations, and access audit-ready 
 
 ---
 
-## Complete System Architecture
+# Complete System Architecture
 
 <p align="center">
   <img src="assets/architecture/system-architecture.png" width="100%">
@@ -137,7 +137,7 @@ Reports & Audit Trail
 
 ---
 
-## Counting Intelligence Engine
+# Counting Intelligence Engine
 
 <p align="center">
   <img src="assets/architecture/counting-engine.png" width="100%">
@@ -174,7 +174,7 @@ Counts entries and exits within a configurable region of interest, suitable for 
 
 ---
 
-## Deployment Architecture
+# Deployment Architecture
 
 <p align="center">
   <img src="assets/architecture/deployment-architecture.png" width="100%">
@@ -194,7 +194,7 @@ Operators can securely monitor live counting sessions from anywhere without requ
 
 ---
 
-## Technology Stack
+# Technology Stack
 
 ### AI & Deep Learning
 
@@ -240,7 +240,7 @@ Operators can securely monitor live counting sessions from anywhere without requ
 
 ---
 
-## Pre-Trained Models
+# Pre-Trained Models
 
 Models were trained on a custom dataset of more than 20,000 annotated livestock images collected under real operational conditions at Deonar Abattoir.
 
@@ -269,7 +269,7 @@ before starting the application.
 
 ---
 
-## Dataset & Training
+# Dataset & Training
 
 | Metric                  | Value             |
 | ----------------------- | ----------------- |
@@ -283,7 +283,7 @@ The dataset was collected and annotated directly from operational livestock coun
 
 ---
 
-## Results
+# Results
 
 | Metric             | Performance              |
 | ------------------ | ------------------------ |
@@ -296,7 +296,7 @@ The dataset was collected and annotated directly from operational livestock coun
 
 ---
 
-## Real-World Deployment
+# Real-World Deployment
 
 The platform was designed and tested for livestock counting operations at Deonar Abattoir, Mumbai.
 
@@ -311,7 +311,7 @@ Supported capabilities include:
 
 ---
 
-## Project Structure
+# Project Structure
 
 ```text
 ├── assets/ # Project media and documentation assets 
@@ -341,7 +341,7 @@ Supported capabilities include:
 
 ---
 
-## Installation
+# Installation
 
 ### Recommended Setup
 
@@ -379,7 +379,7 @@ setup-installer \
 
 ---
 
-## Quick Start
+# Quick Start
 
 Configure your model and video source in:
 
@@ -401,7 +401,7 @@ The application supports:
 
 ---
 
-## Generated Outputs
+# Generated Outputs
 
 Every run generates structured outputs including:
 
@@ -421,7 +421,7 @@ outputs/runs/<run_id>/
 
 ---
 
-## Contributors
+# Contributors
 
 ### Project Lead
 
@@ -445,7 +445,7 @@ MI Tradings & General Suppliers
 
 ---
 
-## License
+# License
 
 Licensed under the Apache License 2.0.
 
