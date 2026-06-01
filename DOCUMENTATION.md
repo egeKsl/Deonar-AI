@@ -207,6 +207,20 @@ What the team came away with:
 
 ---
 
+## Project Timeline
+
+<p align="center">
+  <img src="../assets/architecture/project-timeline.png" width="100%">
+</p>
+
+<p align="center">
+<i>
+From problem discovery and dataset collection to model training, deployment and field validation.
+</i>
+</p>
+
+---
+
 # Part 2 — System Architecture
 
 *The complete technical reference for the pipeline — every component, how they communicate, why they were designed this way, and how the system scales beyond goats to any detection + counting use case.*
@@ -221,18 +235,13 @@ Detection alone (YOLO) is not enough. Tracking alone is not enough. A line cross
 
 This system layers solutions on top of each other:
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        SYSTEM LAYERS                                │
-│                                                                     │
-│  Layer 5: Slot Management    ← per-vendor session isolation         │
-│  Layer 4: Motion Gating      ← physics-based count confirmation     │
-│  Layer 3: Dual-Line Logic    ← geometry-based count confirmation    │
-│  Layer 2: ByteTrack          ← persistent identity across frames    │
-│  Layer 1: YOLOv11            ← per-frame object detection           │
-│  Layer 0: Pipeline           ← real-time frame delivery             │
-└─────────────────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="../assets/architecture/system-architecture.png" width="100%">
+</p>
+
+<p align="center">
+<i>Complete end-to-end architecture of the Deonar AI platform.</i>
+</p>
 
 Each layer handles a class of failure that the layer below cannot handle. This is what separates a research prototype from a production system.
 
@@ -268,63 +277,13 @@ A goat that hesitates near the line, partially crosses and backs up, or is occlu
 
 ## 11. Live Pipeline — Thread Architecture
 
-```
-                         LIVE PIPELINE
-═══════════════════════════════════════════════════════════════════════
+<p align="center">
+  <img src="../assets/architecture/multi-thread-pipeline.png" width="100%">
+</p>
 
-  ┌──────────────────┐     capture_queue      ┌──────────────────┐
-  │  ThreadedVideo   │  ──── [bounded=3] ───▶ │  PacingControl   │
-  │  Capture         │                         │  ler             │
-  │                  │                         │                  │
-  │  • Opens RTSP    │                         │  • Syncs source  │
-  │  • Reads frames  │                         │    timestamps to │
-  │  • Reconnects on │                         │    real time     │
-  │    failure       │                         │  • Autoskip when │
-  │  • drop-oldest   │                         │    lagging       │
-  │    policy        │                         │  • drop-oldest   │
-  └──────────────────┘                         │    on output q   │
-         Thread 1                              └──────────────────┘
-                                                      Thread 2
-                                                          │
-                                               pacing_out_q [bounded=12]
-                                                          │
-                                                          ▼
-                                               ┌──────────────────┐
-                                               │  InferenceWorker │
-                                               │                  │
-                                               │  • YOLO forward  │
-                                               │    pass          │
-                                               │  • ByteTrack     │
-                                               │  • ROI crop      │
-                                               │  • Area filter   │
-                                               └──────────────────┘
-                                                      Thread 3
-                                                          │
-                                                result_queue [bounded=12]
-                                                          │
-                                                          ▼
-                                               ┌──────────────────┐
-                                               │  DisplayWorker   │
-                                               │                  │
-                                               │  • Line crossing │
-                                               │    check         │
-                                               │  • Motion gating │
-                                               │  • Draw HUD      │
-                                               │  • WebRTC push   │
-                                               │  • CSV write     │
-                                               │  • Slot routing  │
-                                               └──────────────────┘
-                                                      Thread 4
-                                                    │         │
-                                              WebRTC      SlotAPI
-                                              Server      (FastAPI)
-                                            (browser)   Thread 5
-
-═══════════════════════════════════════════════════════════════════════
-           Monitor Thread (Thread 6) — watches all threads,
-           logs state changes, restarts pacer/infer if they crash
-═══════════════════════════════════════════════════════════════════════
-```
+<p align="center">
+<i>Multi-threaded real-time processing pipeline used for live CCTV streams.</i>
+</p>
 
 ### Queue Design
 
@@ -440,6 +399,18 @@ Runs a minimal HTTP + WebSocket server (aiortc) that:
 - Downscales frames to configurable resolution before streaming (default 960×540) to reduce bandwidth
 
 This means the live annotated feed is viewable from any browser on the same network — no VNC, no display server required. Critical for headless GPU machines.
+
+### Live Monitoring Interface
+
+<p align="center">
+  <img src="../assets/screenshots/live-monitoring-ui.png" width="100%">
+</p>
+
+<p align="center">
+<i>
+Browser-based live monitoring dashboard powered by WebRTC streaming.
+</i>
+</p>
 
 ---
 
@@ -613,46 +584,45 @@ Line B crossing → if A was missed for this track → COMMIT on B (recovery)
 
 In practice, **Recover mode is used in production** because missed crossings hurt accuracy more than the marginal increase in false positives that Verify mode prevents.
 
+<p align="center">
+  <img src="../assets/architecture/counting-engine.png" width="100%">
+</p>
+
+<p align="center">
+<i>Detection, tracking, motion validation and count confirmation workflow.</i>
+</p>
+
 ---
 
 ## 17. Slot Management System
 
 The slot system allows an operator to partition the global count into per-vendor sessions.
 
-```
-Slot Lifecycle:
+<p align="center">
+  <img src="../assets/architecture/slot-management.png" width="100%">
+</p>
 
-  POST /api/slot/start  →  SlotManager.start_slot()
-  │                              │
-  │                         Creates SlotRuntime
-  │                         Opens SlotCsvWriter
-  │                         Fires on_slot_start callbacks
-  │                              │
-  │                    ┌─────────▼──────────┐
-  │                    │   ACTIVE SLOT      │
-  │                    │                    │
-  counting events ────▶│  on_global_count_  │
-  (from DisplayWorker) │  event()           │
-  │                    │  → adds to         │
-  │                    │    slot_count      │
-  │                    │  → writes to       │
-  │                    │    slot CSV        │
-  │                    └─────────┬──────────┘
-  │                              │
-  POST /api/slot/stop  →  SlotManager.stop_slot()
-                                 │
-                            Finalizes slot
-                            Generates summary JSON
-                            Closes slot CSV
-                            Fires on_slot_stop callbacks
-                            Writes status.txt
-```
+<p align="center">
+<i>Vendor session lifecycle and slot-based counting workflow.</i>
+</p>
 
 **Thread safety:** The slot manager is accessed from two threads simultaneously — the display thread (counting events) and the FastAPI thread (API requests). All public methods are protected by a `threading.Lock`.
 
 **Idempotency:** Duplicate start requests for the same active slot are silently ignored. Duplicate stop requests raise a 409. This makes the API safe to call from unreliable clients.
 
 **Per-slot video recording:** When slot video recording is enabled, `DisplayWorker.on_slot_start()` opens a new `VideoRecorder` for the slot directory. Frames are written to `SLOT_<id>_<timestamp>/slot_video.mp4` during the active slot. On stop or abort, the recorder is closed and a `status.txt` is written.
+
+### Slot Management Interface
+
+<p align="center">
+  <img src="../assets/screenshots/slot-management-ui.png" width="100%">
+</p>
+
+<p align="center">
+<i>
+Operator dashboard for starting, stopping and monitoring vendor counting sessions.
+</i>
+</p>
 
 ---
 
@@ -1120,46 +1090,13 @@ Zone counting does not use the motion intent analyzer — direction is determine
 
 ## 32. Data Flow — From Pixel to CSV Row
 
-```
-cap.read() → frame (full resolution, HWC uint8)
-           │
-           ▼
-InferenceWorker crops ROI: frame[ry:ry+rh, rx:rx+rw]
-           │
-           ▼
-track_once(model, roi, args, tracker_yaml)
-  → YOLO forward pass on ROI
-  → ByteTrack update
-  → filter by min_area_ratio, class filter
-  → returns: [(box_roi, track_id, conf, class, mask), ...]
-           │
-           ▼
-DisplayWorker receives result dict
-  → derives geometry (rx, ry, rw, rh, W, H)
-  → builds lines_roi from config string
-  → initializes DualLineCounter (once, cached)
-           │
-           ▼
-For each detection (box_roi, tid, conf, class, mask):
-  cx, cy = centroid(box_roi, mask)   ← in ROI pixel space
-  motion.update(tid, frame_idx, cx, cy)
-  geometry_event = dual.update_recover(tid, cx, cy, ...)
-           │
-           ▼
-If geometry_event:
-  decision = motion_analyzer.analyze(...)
-  If decision == "accept":
-    state.up_count += 1  (or down_count)
-    csvs.write_event(ts_s, src_frame, proc_frame, tid, dir, cx, cy)
-    animator.trigger(cx, cy, lineB_roi, lineB_full, dir, frame_idx)
-    colorer.mark_counted(tid, frame_idx)
-    slot_mgr.on_global_count_event(...)   ← if slot active
-           │
-           ▼
-_compose_frames() renders annotated ROI + full frame
-  → pushed to WebRTC or OpenCV window
-  → written to VideoRecorder
-```
+<p align="center">
+  <img src="../assets/architecture/end-to-end-dataflow.png" width="100%">
+</p>
+
+<p align="center">
+<i>Journey of a detection event from camera frame to final audit record.</i>
+</p>
 
 Every step from pixel coordinates to CSV row is traceable. The decisions CSV records every motion gating decision. The events CSV records every committed count. Combined, these allow post-hoc analysis of any session.
 
