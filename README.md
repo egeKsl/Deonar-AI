@@ -58,20 +58,61 @@ The platform combines computer vision, object tracking, counting intelligence, v
 
 # Demo
 
-🎥 Full demonstration video:
+<p align="center">
+  <a href="https://youtu.be/Ph46W8hf8gw">
+    <img src="assets/demo/sample_preview.gif" 
+         width="100%"
+         alt="Real-Time Livestock Detection, Tracking and Counting">
+  </a>
+</p>
 
-```text
-assets/demo/deonar-ai-demo.mp4
-```
+<p align="center">
+  <i>
+  Click the preview above to watch the complete end-to-end system demonstration.
+  </i>
+</p>
 
-The demo showcases:
+<p align="center">
+
+<a href="https://youtu.be/Ph46W8hf8gw">
+<img src="https://img.shields.io/badge/▶_Watch_Full_Demo-red?style=for-the-badge">
+</a>
+
+<a href="assets/demo/sample.mp4"> 
+<img src="https://img.shields.io/badge/📹_Annotated_Output-green?style=for-the-badge">
+</a>
+
+</p>
+
+### What the Demo Covers
 
 * Live CCTV ingestion
+
 * Real-time goat detection
+
 * Multi-object tracking
-* Counting engine decisions
-* Vendor session workflow
-* Audit report generation
+
+* Dual-line counting intelligence
+
+* Vendor session management
+
+* Browser-based monitoring
+
+* Audit reporting and analytics
+
+### Annotated Output
+
+The annotated output video showcases:
+
+* YOLO detections
+
+* Tracking IDs
+
+* Counting line interactions
+
+* Live count updates
+
+* Real-time visual overlays
 
 ---
 
