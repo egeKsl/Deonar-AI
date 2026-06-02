@@ -370,29 +370,28 @@ Supported capabilities include:
 # Project Structure
 
 ```text
-├── assets/ # Project media and documentation assets 
-│   ├── architecture/ # System architecture diagrams and workflow visuals 
-│   ├── screenshots/ # Application UI screenshots 
-│   ├── demo/ # Demo videos and recordings 
-│   └── banner/ # Repository banners and branding images 
+├── assets/                # Project media and documentation assets 
+│   ├── architecture/      # System architecture diagrams and workflow visuals 
+│   ├── screenshots/       # Application UI screenshots 
+│   ├── demo/              # Demo videos and recordings
 │ 
-├── configs/ # Configuration files (models, streams, counting settings) 
-├── models/ # Downloaded and trained AI model weights 
-├── outputs/ # Generated reports, logs, videos, and run artifacts 
-├── src/ # Core application source code 
-│   ├── capture/ # Video capture and stream ingestion modules
-│   ├── infer/ # YOLO inference and detection pipeline 
-│   ├── counting/ # Counting logic and event processing 
-│   ├── display/ # Visualization, overlays, and UI rendering 
-│   ├── slots/ # Vendor slot/session management system 
-│   ├── geometry/ # Lines, zones, ROIs, and spatial calculations 
-│   ├── runtime/ # Runtime orchestration and application services 
-│   └── utils/ # Shared helper functions and utilities 
+├── configs/               # Configuration files (models, streams, counting settings) 
+├── models/                # Downloaded and trained AI model weights 
+├── outputs/               # Generated reports, logs, videos, and run artifacts 
+├── src/                   # Core application source code 
+│   ├── capture/           # Video capture and stream ingestion modules
+│   ├── infer/             # YOLO inference and detection pipeline 
+│   ├── counting/          # Counting logic and event processing 
+│   ├── display/           # Visualization, overlays, and UI rendering 
+│   ├── slots/             # Vendor slot/session management system 
+│   ├── geometry/          # Lines, zones, ROIs, and spatial calculations 
+│   ├── runtime/           # Runtime orchestration and application services 
+│   └── utils/             # Shared helper functions and utilities 
 │
-├── main.py # Application entry point 
-├── pyproject.toml # Project metadata and build configuration 
-├── requirements.txt # Python dependency list 
-└── README.md # Project documentation
+├── main.py                # Application entry point 
+├── pyproject.toml         # Project metadata and build configuration 
+├── requirements.txt       # Python dependency list 
+└── README.md              # Project documentation
 ```
 
 ---
