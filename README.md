@@ -146,6 +146,12 @@ Monitor live counting sessions, track vendor operations, and access audit-ready 
 </i>
 </p>
 
+# Documentation
+
+For readers interested in the technical implementation details, counting algorithms, deployment architecture, project journey, and system design decisions, see:
+
+- 📘 [DOCUMENTATION.md](DOCUMENTATION.md) — Complete technical and project documentation
+  
 ---
 
 # Complete System Architecture
@@ -321,6 +327,15 @@ before starting the application.
 | Validation Accuracy     | ~99% mAP@50       |
 
 The dataset was collected and annotated directly from operational livestock counting environments under varying camera angles, lighting conditions, densities, and weather conditions.
+
+### Dataset Access
+
+The dataset used for training was collected from real-world livestock counting environments and is not publicly distributed.
+
+For academic, research, or industry collaboration inquiries regarding dataset availability, please contact:
+
+**Ubada Ghawte**
+📧 [ubadaghawte2005@gmail.com](mailto:ubadaghawte2005@gmail.com)
 
 ---
 
