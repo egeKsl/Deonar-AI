@@ -78,7 +78,7 @@ The platform combines computer vision, object tracking, counting intelligence, v
 <img src="https://img.shields.io/badge/▶_Watch_Full_Demo-red?style=for-the-badge">
 </a>
 
-<a href="assets/demo/sample.mp4"> 
+<a href="https://youtu.be/wzZNj39ZOIA"> 
 <img src="https://img.shields.io/badge/📹_Annotated_Output-green?style=for-the-badge">
 </a>
 
