@@ -695,14 +695,7 @@ def load_config(
 
     # --------- Slots Manager knobs ---------
     # runtime
-    slots_enabled = _as_bool(
-        (
-            run.get("slots_enabled")
-            if used_yaml
-            else cfg.get("legacy_env", {}).get("SLOTS_ENABLED")
-        ),
-        False,
-    )
+    slots_enabled = False
 
     slot_api_cfg = run.get("slot_api", {})
     slot_api_host = _as_str(slot_api_cfg.get("host"), default="127.0.0.1")

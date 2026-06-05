@@ -127,7 +127,6 @@ def _update_counts_dual_for_frame(
     lineA_full=None,
     lineB_roi=None,
     lineB_full=None,
-    slot_mgr=None,
 ):
     """
     DUAL-LINE MODE: updates counts per frame.
@@ -262,22 +261,7 @@ def _update_counts_dual_for_frame(
                             cx, cy, lineB_roi, lineB_full, direction, feeder.out_index
                         )
 
-                    # ----------------------------------------
-                    # Slot routing (ONLY after accepted count)
-                    # ----------------------------------------
-                    if slot_mgr:
-                        slot_event = slot_mgr.on_global_count_event(
-                            global_count=state.up_count + state.down_count,
-                            direction=direction,
-                            timestamp=datetime.now(timezone.utc),
-                            track_id=tid,
-                            proc_frame_idx=feeder.out_index,
-                        )
 
-                        if slot_event:
-                            writer = slot_mgr.get_csv_writer()
-                            if writer:
-                                writer.write_event(slot_event)
 
                 else:
                     if not args.quiet:
@@ -417,22 +401,7 @@ def _update_counts_dual_for_frame(
                             cx, cy, lineB_roi, lineB_full, dirB, feeder.out_index
                         )
 
-                    # ----------------------------------------
-                    # Slot routing (ONLY after accepted count)
-                    # ----------------------------------------
-                    if slot_mgr:
-                        slot_event = slot_mgr.on_global_count_event(
-                            global_count=state.up_count + state.down_count,
-                            direction=dirB,
-                            timestamp=datetime.now(timezone.utc),
-                            track_id=tid,
-                            proc_frame_idx=feeder.out_index,
-                        )
 
-                        if slot_event:
-                            writer = slot_mgr.get_csv_writer()
-                            if writer:
-                                writer.write_event(slot_event)
                 else:
                     if not args.quiet:
                         log.warn(

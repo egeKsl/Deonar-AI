@@ -85,7 +85,6 @@ def track_once(
 
     Preserves original filtering by area ratio and class filter.
     """
-    # Run the model.track call (relies on ultralytics model API)
     results = model.track(
         source=roi_frame,
         imgsz=args.imgsz,
@@ -97,6 +96,7 @@ def track_once(
         persist=True,
         stream=False,
         verbose=False,
+        classes=[18],
     )
 
     dets: List[tuple] = []
@@ -186,7 +186,7 @@ def track_once(
             # if something odd about roi_area/args, skip area filter
             pass
 
-        if keep_class_ids is not None and (int(cl) not in keep_class_ids):
+        if int(cl) != 18:
             continue
 
         dets.append((b, i_d, c, cl, mask))

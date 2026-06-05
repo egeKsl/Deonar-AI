@@ -387,10 +387,6 @@ def build_webrtc_index_html() -> str:
       Dashboard
     </a>
 
-    <a href="/slots" class="nav-link">
-      Slots
-    </a>
-
   </div>
   <div class="main">
     <div class="stream-layout">
@@ -415,57 +411,7 @@ def build_webrtc_index_html() -> str:
 
       </div>
 
-      <!-- Slot Info Card -->
-      <div id="slot-card" class="slot-card hidden">
-        <div class="slot-row slot-title">
-            SLOT: <span id="slot-id">-</span>
-        </div>
 
-        <div class="slot-row">
-            VENDOR ID: <span id="slot-vendor-id">-</span>
-            VENDOR: <span id="slot-vendor-name">-</span>
-        </div>
-
-        <div class="slot-row">
-            START: <span id="slot-start">-</span>
-            END: <span id="slot-end">-</span>
-        </div>
-
-        <div class="slot-divider"></div>
-
-        <div class="metrics-grid">
-
-          <div class="metric">
-            <div class="metric-value" id="slot-up">0</div>
-            <div class="metric-label">UP</div>
-          </div>
-
-          <div class="metric">
-            <div class="metric-value" id="slot-down">0</div>
-            <div class="metric-label">DOWN</div>
-          </div>
-
-          <div class="metric">
-            <div class="metric-value" id="slot-total">0</div>
-            <div class="metric-label">TOTAL</div>
-          </div>
-
-          <div class="metric">
-            <div class="metric-value" id="slot-declared">0</div>
-            <div class="metric-label">DECLARED</div>
-          </div>
-
-        </div>
-
-        <div class="slot-divider"></div>
-
-        <div class="slot-row slot-meta">
-            STATUS: <span id="slot-status">-</span>
-            START_GC: <span id="slot-start-gc">-</span>
-            END_GC: <span id="slot-end-gc">-</span>
-            DURATION: <span id="slot-duration">-</span>
-        </div>
-      </div>
 
       <div class="controls">
         <button id="btn_start">Reconnect</button>
@@ -613,140 +559,6 @@ def build_webrtc_index_html() -> str:
       }
     });
 
-    const slotCard   = document.getElementById('slot-card');
-    const slotId     = document.getElementById('slot-id');
-    const slotVendorId   = document.getElementById('slot-vendor-id');
-    const slotVendorName = document.getElementById('slot-vendor-name');
-    const slotStart  = document.getElementById('slot-start');
-    const slotEnd    = document.getElementById('slot-end');
-    const slotUp     = document.getElementById('slot-up');
-    const slotDown   = document.getElementById('slot-down');
-    const slotTotal  = document.getElementById('slot-total');
-    const slotDeclared = document.getElementById('slot-declared');
-    const slotStatus = document.getElementById('slot-status');
-    const slotStartGc = document.getElementById('slot-start-gc');
-    const slotEndGc = document.getElementById('slot-end-gc');
-    const slotDuration = document.getElementById('slot-duration');
-
-    function formatTime(ts) {
-      if (!ts) return '-';
-      const d = new Date(ts);
-      return d.toLocaleString();
-    }
-    
-    function formatDuration(ms) {
-      if (!Number.isFinite(ms) || ms <= 0) return '-';
-      const s = Math.floor(ms / 1000);
-      const h = Math.floor(s / 3600);
-      const m = Math.floor((s % 3600) / 60);
-      const sec = s % 60;
-      return `${h}h ${m}m ${sec}s`;
-    }
-
-    let lastSlotSnapshot = null;
-    let lastActiveSlotId = null;
-    let inactiveEndTimeIso = null;
-
-    function renderSlotCard(slot, isActive) {
-      if (!slot) {
-        slotCard.classList.add('hidden');
-        return;
-      }
-
-      const breakdown = slot.direction_breakdown || {};
-      slotCard.classList.remove('hidden');
-      slotCard.classList.toggle('inactive', !isActive);
-
-      slotId.textContent         = slot.slot_id ?? '-';
-      slotVendorId.textContent   = slot.vendor_id ?? '-';
-      slotVendorName.textContent = slot.vendor_name ?? '-';
-      slotStart.textContent      = formatTime(slot.start_time);
-      // If inactive snapshot has no explicit end_time, show locally captured transition time.
-      const resolvedEnd = slot.end_time ?? inactiveEndTimeIso;
-      slotEnd.textContent        = formatTime(resolvedEnd);
-
-      slotUp.textContent         = breakdown.up ?? 0;
-      slotDown.textContent       = breakdown.down ?? 0;
-      slotTotal.textContent      = slot.slot_count ?? 0;
-      slotDeclared.textContent   = slot.declared_count ?? '-';
-      
-      slotTotal.classList.remove('slot-mismatch');
-      slotDeclared.classList.remove('slot-mismatch');
-
-      const declaredNum = Number(slot.declared_count);
-      const slotCountNum = Number(slot.slot_count);
-      const hasComparableCounts =
-        Number.isFinite(declaredNum) && Number.isFinite(slotCountNum);
-      if (hasComparableCounts && declaredNum !== slotCountNum) {
-        slotTotal.classList.add('slot-mismatch');
-        slotDeclared.classList.add('slot-mismatch');
-      }
-
-      slotStatus.textContent = isActive ? (slot.status ?? 'ACTIVE') : 'INACTIVE';
-
-      slotStatus.classList.remove('slot-status-active', 'slot-status-inactive');
-      slotStatus.classList.add(isActive ? 'slot-status-active' : 'slot-status-inactive');
-
-      slotStartGc.textContent    = slot.start_global_count ?? '-';
-      slotEndGc.textContent      = slot.end_global_count ?? '-';
-      
-      if (slot.start_time && slotDuration) {
-        const startMs = new Date(slot.start_time).getTime();
-        const endMs = isActive
-          ? Date.now()
-          : new Date(resolvedEnd ?? Date.now()).getTime();
-        slotDuration.textContent = formatDuration(endMs - startMs);
-      } else if (slotDuration) {
-        slotDuration.textContent = '-';
-      }
-    }
-
-    async function pollSlotState() {
-      // Avoid background-tab churn and unnecessary polling when page is hidden.
-      if (document.hidden) return;
-      try {
-        const resp = await fetch('/slot-state');
-        if (!resp.ok) return;
-
-        const data = await resp.json();
-
-        if (data.active && data.slot) {
-          lastActiveSlotId = data.slot.slot_id ?? null;
-          inactiveEndTimeIso = null;
-        }
-
-        if (data.slot) {
-          lastSlotSnapshot = data.slot;
-        }
-        if (data.active && data.slot) {
-          renderSlotCard(data.slot, true);
-        } else if (lastSlotSnapshot) {
-          // Capture a stable local end-time once when the slot transitions inactive.
-          if (!inactiveEndTimeIso && lastActiveSlotId && lastSlotSnapshot.slot_id === lastActiveSlotId) {
-            inactiveEndTimeIso = new Date().toISOString();
-          }
-          // Keep the latest slot visible in a dimmed state for operator context.
-          renderSlotCard(lastSlotSnapshot, false);
-        } else {
-          slotCard.classList.add('hidden');
-        }
-      } catch (e) {
-        console.warn('slot poll failed', e);
-      }
-    }
-
-    // Poll at a moderate interval to reduce API pressure on constrained devices.
-    setInterval(pollSlotState, 3000);
-
-    setInterval(() => {
-      try {
-        if (lastSlotSnapshot) {
-          renderSlotCard(lastSlotSnapshot, slotStatus.classList.contains('slot-status-active'));
-        }
-      } catch (e) {
-        console.warn('slot duration refresh failed', e);
-      }
-    }, 1000);
   </script>
 </body>
 </html>
@@ -791,7 +603,7 @@ nav a.active{background:#1ddf8b22;color:#1ddf8b;font-weight:600}
 .main{padding:16px;max-width:1400px;margin:0 auto}
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px}
 .charts-grid{display:grid;grid-template-columns:1fr 320px;gap:12px;margin-bottom:14px}
-.bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.bottom-grid{display:grid;grid-template-columns:1fr;gap:12px}
 @media(max-width:900px){.charts-grid{grid-template-columns:1fr}.bottom-grid{grid-template-columns:1fr}}
 @media(max-width:480px){.stat-grid{grid-template-columns:1fr 1fr}}
 
@@ -854,7 +666,6 @@ nav a.active{background:#1ddf8b22;color:#1ddf8b;font-weight:600}
   <span class="brand">🐐 DEONAR AI</span>
   <a href="/">Stream</a>
   <a href="/dashboard" class="active">Dashboard</a>
-  <a href="/slots">Slots</a>
   <span class="dot" id="liveDot"></span>
   <span class="live-time" id="liveTime"></span>
 </nav>
@@ -953,49 +764,7 @@ nav a.active{background:#1ddf8b22;color:#1ddf8b;font-weight:600}
         </div>
       </div>
     </div>
-    <!-- Active slot mini -->
-    <div class="card">
-      <div class="card-title">Active Slot</div>
-      <template x-if="slotActive && slotData">
-        <div class="slot-mini">
-          <div class="sm-id" x-text="'SLOT: ' + slotData.slot_id"></div>
-          <div x-text="slotData.vendor_name || slotData.vendor_id || '—'"></div>
-          <div class="sm-row" style="margin-top:6px">
-            <span>↑ <span class="sm-val" style="color:#1ddf8b"
-              x-text="slotData.direction_breakdown?.up ?? 0"></span></span>
-            <span>↓ <span class="sm-val" style="color:#ff5c5c"
-              x-text="slotData.direction_breakdown?.down ?? 0"></span></span>
-            <span>Total <span class="sm-val" x-text="slotData.slot_count ?? 0"></span></span>
-            <template x-if="slotData.declared_count">
-              <span>/ <span x-text="slotData.declared_count"></span> declared</span>
-            </template>
-          </div>
-          <template x-if="slotData.declared_count">
-            <div>
-              <div class="slot-progress">
-                <div class="slot-progress-fill"
-                  :style="'width:' + Math.min(100,Math.round((slotData.slot_count||0)/slotData.declared_count*100)) + '%'">
-                </div>
-              </div>
-              <div style="font-size:.7rem;color:#555"
-                x-text="Math.min(100,Math.round((slotData.slot_count||0)/slotData.declared_count*100)) + '% complete'">
-              </div>
-            </div>
-          </template>
-          <div style="margin-top:6px;font-size:.75rem;color:#555">
-            <a href="/slots" style="color:#2d6cdf;text-decoration:none">→ Manage slots</a>
-          </div>
-        </div>
-      </template>
-      <template x-if="!slotActive">
-        <div class="no-slot">
-          No active slot<br>
-          <a href="/slots" style="color:#2d6cdf;font-size:.78rem;text-decoration:none">
-            → Start a session
-          </a>
-        </div>
-      </template>
-    </div>
+
   </div>
 
 </div><!-- /main -->
@@ -1013,8 +782,7 @@ function dashboard(){
   return {
     s: {up:0, down:0, total:0, infer_fps:0, e2e_fps:0, threads:{}, queues:{}},
     prev: {up:0, down:0, total:0},
-    slotActive: false,
-    slotData: null,
+
     offline: false,
     _failCount: 0,
     _countChart: null,
@@ -1030,9 +798,9 @@ function dashboard(){
 
     threadList(){
       var t=this.s.threads||{};
-      var names=['capture','pacer','infer','display','slot_api'];
+      var names=['capture','pacer','infer','display'];
       var labels={capture:'Capture',pacer:'Pacing',infer:'Inference',
-                  display:'Display',slot_api:'Slot API'};
+                  display:'Display'};
       return names.map(n=>{
         var v=t[n];
         if(v===null||v===undefined) return {name:labels[n],cls:'t-na',color:'#555',label:'N/A'};
@@ -1082,15 +850,7 @@ function dashboard(){
       }
     },
 
-    async pollSlot(){
-      try{
-        var r=await fetch('/slot-state',{signal:AbortSignal.timeout(3000)});
-        if(!r.ok) return;
-        var d=await r.json();
-        this.slotActive=!!d.active;
-        this.slotData=d.slot||null;
-      }catch(e){}
-    },
+
 
     initCountChart(){
       var ctx=document.getElementById('countChart').getContext('2d');
@@ -1157,9 +917,7 @@ function dashboard(){
       this.initCountChart();
       this.initDonutChart();
       this.pollStatus();
-      this.pollSlot();
       setInterval(()=>this.pollStatus(), 2000);
-      setInterval(()=>this.pollSlot(), 3000);
     }
   };
 }
@@ -1169,411 +927,3 @@ function dashboard(){
 """
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SLOTS PAGE
-# ─────────────────────────────────────────────────────────────────────────────
-def build_slots_html(slot_api_port: int = 8090) -> str:
-    api = f"http://localhost:{slot_api_port}"
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Slots — Deonar AI</title>
-<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js" defer></script>
-<style>
-*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
-     background:#0f0f0f;color:#e0e0e0;min-height:100vh}}
-nav{{background:#1b1b1b;border-bottom:1px solid #272727;padding:10px 20px;
-    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-    position:sticky;top:0;z-index:100;box-shadow:0 2px 8px #0008}}
-.brand{{font-weight:700;font-size:1rem;color:#1ddf8b;margin-right:auto}}
-nav a{{color:#888;text-decoration:none;font-size:.82rem;padding:5px 11px;
-      border-radius:5px;transition:.15s}}
-nav a:hover{{background:#252525;color:#ddd}}
-nav a.active{{background:#2d6cdf22;color:#2d6cdf;font-weight:600}}
-.dot{{width:8px;height:8px;border-radius:50%;background:#555;display:inline-block;transition:.3s}}
-.dot.on{{background:#1ddf8b;box-shadow:0 0 6px #1ddf8b88;animation:pdot 1.8s ease-in-out infinite}}
-@keyframes pdot{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}
-.live-time{{font-size:.72rem;color:#555}}
-.main{{padding:16px;max-width:1200px;margin:0 auto}}
-.top-grid{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}}
-@media(max-width:700px){{.top-grid{{grid-template-columns:1fr}}}}
-.card{{background:#1a1a1a;border:1px solid #262626;border-radius:10px;padding:16px}}
-.card-title{{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;
-             color:#666;margin-bottom:12px}}
-/* ACTIVE SLOT */
-.slot-card{{border-left:3px solid #1ddf8b}}
-.slot-card.inactive{{border-color:#444}}
-.slot-id{{font-size:1.1rem;font-weight:700;color:#1ddf8b;margin-bottom:2px}}
-.slot-vendor{{font-size:.85rem;color:#aaa;margin-bottom:10px}}
-.counts-row{{display:flex;gap:18px;flex-wrap:wrap;margin:8px 0}}
-.count-item{{text-align:center}}
-.count-val{{font-size:1.6rem;font-weight:700;line-height:1}}
-.count-label{{font-size:.65rem;color:#666;text-transform:uppercase;letter-spacing:.05em}}
-.c-up{{color:#1ddf8b}}
-.c-down{{color:#ff5c5c}}
-.c-tot{{color:#e0e0e0}}
-.c-decl{{color:#ffb347}}
-.prog-bar{{height:7px;background:#222;border-radius:4px;margin:10px 0 4px;overflow:hidden}}
-.prog-fill{{height:100%;background:linear-gradient(90deg,#2d6cdf,#1ddf8b);
-           border-radius:4px;transition:width .6s ease}}
-.duration{{font-size:.75rem;color:#555;margin-top:6px}}
-.no-slot{{color:#444;text-align:center;padding:20px 0;font-size:.85rem}}
-/* STATUS BADGE */
-.badge{{display:inline-block;padding:2px 8px;border-radius:4px;
-        font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em}}
-.badge-active{{background:#1ddf8b22;color:#1ddf8b;border:1px solid #1ddf8b44}}
-.badge-inactive{{background:#33333388;color:#666;border:1px solid #333}}
-/* FORM */
-.form-group{{margin-bottom:11px}}
-label{{display:block;font-size:.72rem;color:#888;text-transform:uppercase;
-       letter-spacing:.05em;margin-bottom:5px}}
-input{{width:100%;background:#131313;border:1px solid #303030;border-radius:6px;
-       padding:8px 10px;color:#e0e0e0;font-size:.875rem;transition:.2s;outline:none}}
-input:focus{{border-color:#2d6cdf;box-shadow:0 0 0 2px #2d6cdf22}}
-input::placeholder{{color:#3a3a3a}}
-input:disabled{{opacity:.5;cursor:not-allowed}}
-.btn{{width:100%;padding:10px;border:none;border-radius:7px;font-size:.875rem;
-      font-weight:600;cursor:pointer;transition:.2s;margin-top:4px}}
-.btn:disabled{{opacity:.45;cursor:not-allowed}}
-.btn-start{{background:#1ddf8b;color:#0a0a0a}}
-.btn-start:not(:disabled):hover{{background:#1af7a0}}
-.btn-stop{{background:#ff5c5c22;color:#ff5c5c;border:1px solid #ff5c5c44;margin-top:8px}}
-.btn-stop:not(:disabled):hover{{background:#ff5c5c33}}
-.msg{{font-size:.78rem;padding:8px 10px;border-radius:5px;margin-top:8px;display:none}}
-.msg.show{{display:block}}
-.msg.ok{{background:#1ddf8b18;color:#1ddf8b;border:1px solid #1ddf8b33}}
-.msg.err{{background:#ff5c5c18;color:#ff9999;border:1px solid #ff5c5c33}}
-/* HISTORY TABLE */
-.tbl-wrap{{overflow-x:auto}}
-table{{width:100%;border-collapse:collapse;font-size:.8rem}}
-th{{background:#141414;color:#666;text-transform:uppercase;font-size:.68rem;
-    letter-spacing:.06em;padding:8px 10px;text-align:left;border-bottom:1px solid #222}}
-td{{padding:8px 10px;border-bottom:1px solid #1d1d1d;vertical-align:middle}}
-tr:hover td{{background:#1e1e1e}}
-.st-ok{{color:#1ddf8b}}
-.st-mm{{color:#ffb347}}
-.st-ab{{color:#ff5c5c}}
-.st-badge{{display:inline-block;padding:2px 7px;border-radius:3px;font-size:.68rem;font-weight:600}}
-.st-ok-b{{background:#1ddf8b18;color:#1ddf8b}}
-.st-mm-b{{background:#ffb34718;color:#ffb347}}
-.st-ab-b{{background:#ff5c5c18;color:#ff5c5c}}
-.match-yes{{color:#1ddf8b;font-size:.85rem}}
-.match-no{{color:#ffb347;font-size:.85rem}}
-.empty-row{{text-align:center;color:#444;padding:20px}}
-</style>
-</head>
-<body>
-<nav>
-  <span class="brand">🐐 DEONAR AI</span>
-  <a href="/">Stream</a>
-  <a href="/dashboard">Dashboard</a>
-  <a href="/slots" class="active">Slots</a>
-  <span class="dot" id="liveDot"></span>
-  <span class="live-time" id="liveTime"></span>
-</nav>
-
-<div class="main" x-data="slotsApp()" x-init="init()">
-
-  <div class="top-grid">
-
-    <!-- LEFT: Active slot + controls -->
-    <div style="display:flex;flex-direction:column;gap:12px">
-
-      <!-- Active slot card -->
-      <div class="card slot-card" :class="{{inactive: !slotActive}}">
-        <div class="card-title">
-          Active Session
-          <span class="badge" :class="slotActive ? 'badge-active' : 'badge-inactive'"
-                x-text="slotActive ? 'ACTIVE' : 'IDLE'" style="margin-left:8px"></span>
-        </div>
-        <template x-if="slotActive && slotData">
-          <div>
-            <div class="slot-id" x-text="'Slot: ' + slotData.slot_id"></div>
-            <div class="slot-vendor" x-text="slotData.vendor_name || slotData.vendor_id || 'Unknown vendor'"></div>
-            <div class="counts-row">
-              <div class="count-item">
-                <div class="count-val c-tot" x-text="slotData.slot_count ?? 0"></div>
-                <div class="count-label">Counted</div>
-              </div>
-              <div class="count-item">
-                <div class="count-val c-decl" x-text="slotData.declared_count ?? '—'"></div>
-                <div class="count-label">Declared</div>
-              </div>
-              <div class="count-item">
-                <div class="count-val c-up" x-text="slotData.direction_breakdown?.up ?? 0"></div>
-                <div class="count-label">In ↑</div>
-              </div>
-              <div class="count-item">
-                <div class="count-val c-down" x-text="slotData.direction_breakdown?.down ?? 0"></div>
-                <div class="count-label">Out ↓</div>
-              </div>
-            </div>
-            <template x-if="slotData.declared_count">
-              <div>
-                <div class="prog-bar">
-                  <div class="prog-fill"
-                    :style="'width:'+Math.min(100,Math.round((slotData.slot_count||0)/slotData.declared_count*100))+'%'">
-                  </div>
-                </div>
-                <div class="duration"
-                  x-text="Math.min(100,Math.round((slotData.slot_count||0)/slotData.declared_count*100))+'% complete'">
-                </div>
-              </div>
-            </template>
-            <div class="duration" x-text="'Started: ' + fmtTime(slotData.start_time)"></div>
-            <div class="duration" x-text="'Duration: ' + liveDuration(slotData.start_time)"></div>
-          </div>
-        </template>
-        <template x-if="!slotActive">
-          <div class="no-slot">No active session — start one below</div>
-        </template>
-      </div>
-
-      <!-- Stop button -->
-      <button class="btn btn-stop" :disabled="!slotActive" @click="stopSlot()"
-              x-text="stopping ? 'Stopping…' : '■  Stop Session'"></button>
-      <div class="msg" :class="{{show: stopMsg, ok: stopOk, err: !stopOk}}"
-           x-text="stopMsg"></div>
-
-    </div><!-- /left -->
-
-    <!-- RIGHT: Start form -->
-    <div class="card">
-      <div class="card-title">Start New Session</div>
-      <div class="form-group">
-        <label>Slot ID *</label>
-        <input x-model="form.slot_id" placeholder="e.g. VND-001" :disabled="slotActive || starting">
-      </div>
-      <div class="form-group">
-        <label>Vendor ID</label>
-        <input x-model="form.vendor_id" placeholder="e.g. V001" :disabled="slotActive || starting">
-      </div>
-      <div class="form-group">
-        <label>Vendor Name</label>
-        <input x-model="form.vendor_name" placeholder="e.g. Ahmed Traders" :disabled="slotActive || starting">
-      </div>
-      <div class="form-group">
-        <label>Declared Count</label>
-        <input x-model="form.declared_count" type="number" min="1" placeholder="e.g. 50"
-               :disabled="slotActive || starting">
-      </div>
-      <div class="form-group">
-        <label>Started By</label>
-        <input
-            x-model="form.started_by"
-            placeholder="e.g. Ubada"
-            :disabled="slotActive || starting">
-      </div>
-      <button class="btn btn-start" :disabled="slotActive || starting || !form.slot_id.trim() || !form.vendor_id.trim() || !form.vendor_name.trim() || !form.declared_count.trim() || !form.started_by.trim()"
-              @click="startSlot()"
-              x-text="starting ? 'Starting…' : '▶  Start Session'"></button>
-      <div class="msg" :class="{{show: startMsg, ok: startOk, err: !startOk}}"
-           x-text="startMsg"></div>
-    </div>
-
-  </div><!-- /top-grid -->
-
-  <!-- HISTORY TABLE -->
-  <div class="card">
-    <div class="card-title">Session History
-      <span style="color:#333;margin-left:6px" x-text="history.length ? '(' + history.length + ' sessions)' : ''"></span>
-    </div>
-    <div class="tbl-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Slot ID</th>
-            <th>Vendor</th>
-            <th>Counted</th>
-            <th>Declared</th>
-            <th>Match</th>
-            <th>Status</th>
-            <th>Duration</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template x-if="history.length === 0">
-            <tr><td colspan="7" class="empty-row">No completed sessions yet this run</td></tr>
-          </template>
-          <template x-for="row in history" :key="row.slot_id + (row.start_time||'')">
-            <tr>
-              <td style="font-weight:600;color:#ccc" x-text="row.slot_id || '—'"></td>
-              <td style="color:#aaa" x-text="row.vendor_name || row.vendor_id || '—'"></td>
-              <td style="font-weight:600" :class="matchColor(row)" x-text="row.slot_count ?? '—'"></td>
-              <td style="color:#aaa" x-text="row.declared_count ?? '—'"></td>
-              <td x-html="matchIcon(row)"></td>
-              <td x-html="statusBadge(row)"></td>
-              <td style="color:#555;font-size:.75rem" x-text="calcDuration(row)"></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-</div><!-- /main -->
-
-<script>
-setInterval(()=>{{
-  var el=document.getElementById('liveTime');
-  if(el) el.textContent=new Date().toLocaleTimeString();
-}},1000);
-document.getElementById('liveTime').textContent=new Date().toLocaleTimeString();
-
-const SLOT_API='{api}';
-
-function slotsApp(){{
-  return {{
-    slotActive:false, slotData:null,
-    history:[],
-    form:{{slot_id:'',vendor_id:'',vendor_name:'',declared_count:'',started_by:''}},
-    starting:false, stopping:false,
-    startMsg:'', startOk:true,
-    stopMsg:'',  stopOk:true,
-    
-    currentOperator:'',
-
-    fmtTime(ts){{
-      if(!ts) return '—';
-      try{{ return new Date(ts).toLocaleTimeString(); }}catch(e){{return ts;}}
-    }},
-    liveDuration(start){{
-      if(!start) return '—';
-      try{{
-        var ms=Date.now()-new Date(start).getTime();
-        if(ms<0) return '—';
-        var s=Math.floor(ms/1000), h=Math.floor(s/3600),
-            m=Math.floor((s%3600)/60), sec=s%60;
-        return (h?h+'h ':'')+m+'m '+sec+'s';
-      }}catch(e){{return '—';}}
-    }},
-    calcDuration(row){{
-      if(!row.start_time) return '—';
-      var end=row.end_time? new Date(row.end_time).getTime() : Date.now();
-      var ms=end-new Date(row.start_time).getTime();
-      if(isNaN(ms)||ms<0) return '—';
-      var s=Math.floor(ms/1000), m=Math.floor(s/60);
-      return m+'m '+(s%60)+'s';
-    }},
-    matchColor(row){{
-      if(row.declared_count==null) return '';
-      return row.slot_count===row.declared_count?'st-ok':'st-mm';
-    }},
-    matchIcon(row){{
-      if(row.declared_count==null) return '<span style="color:#555">—</span>';
-      return row.slot_count===row.declared_count
-        ? '<span class="match-yes">✓</span>'
-        : '<span class="match-no">⚠</span>';
-    }},
-    statusBadge(row){{
-      var st=(row.summary_status||row.status||'').toUpperCase();
-      if(st==='OK')       return '<span class="st-badge st-ok-b">OK</span>';
-      if(st==='MISMATCH') return '<span class="st-badge st-mm-b">MISMATCH</span>';
-      if(st==='ABORTED')  return '<span class="st-badge st-ab-b">ABORTED</span>';
-      return '<span style="color:#555">'+st+'</span>';
-    }},
-
-    async pollSlot(){{
-      try{{
-        var r=await fetch('/slot-state',{{signal:AbortSignal.timeout(3000)}});
-        if(!r.ok) return;
-        var d=await r.json();
-        this.slotActive=!!d.active;
-        this.slotData=d.slot||null;
-        document.getElementById('liveDot').className='dot on';
-      }}catch(e){{
-        document.getElementById('liveDot').className='dot';
-      }}
-    }},
-
-    async loadHistory(){{
-      try{{
-        var r=await fetch('/slot-history',{{signal:AbortSignal.timeout(3000)}});
-        if(!r.ok) return;
-        var d=await r.json();
-        this.history=d.history||[];
-      }}catch(e){{}}
-    }},
-
-    async startSlot(){{
-      var sid=this.form.slot_id.trim();
-      if(!sid){{ this.startMsg='Slot ID is required.'; this.startOk=false; return; }}
-      this.starting=true; this.startMsg='';
-      try{{
-        var body={{slot_id:sid, started_by: this.form.started_by.trim()}};
-        if(this.form.vendor_id.trim())  body.vendor_id=this.form.vendor_id.trim();
-        if(this.form.vendor_name.trim()) body.vendor_name=this.form.vendor_name.trim();
-        if(this.form.declared_count)    body.declared_count=parseInt(this.form.declared_count)||null;
-        var r=await fetch(SLOT_API+'/api/slot/start',{{
-          method:'POST',
-          headers:{{'Content-Type':'application/json'}},
-          body:JSON.stringify(body),
-          signal:AbortSignal.timeout(5000)
-        }});
-        var d=await r.json();
-        if(r.ok||r.status===200){{
-          this.startMsg='Session started successfully.';
-          this.startOk=true;
-          this.form={{slot_id:'',vendor_id:'',vendor_name:'',declared_count:'',started_by:''}};
-          await this.pollSlot();
-          this.currentOperator = body.started_by;
-        }}else{{
-          this.startMsg='Error: '+(d.detail||d.message||r.status);
-          this.startOk=false;
-        }}
-      }}catch(e){{
-        this.startMsg='Could not reach slot API. Is the system running?';
-        this.startOk=false;
-      }}
-      this.starting=false;
-      setTimeout(()=>{{this.startMsg='';}}, 5000);
-    }},
-
-    async stopSlot(){{
-      if(!this.slotData) return;
-      this.stopping=true; this.stopMsg='';
-      try{{
-        var r=await fetch(SLOT_API+'/api/slot/stop',{{
-          method:'POST',
-          headers:{{'Content-Type':'application/json'}},
-          body: JSON.stringify({{
-            slot_id: this.slotData.slot_id,
-            stopped_by: this.currentOperator,
-            reason: "Manual stop from dashboard"
-          }}),
-          signal:AbortSignal.timeout(5000)
-        }});
-        var d=await r.json();
-        if(r.ok||r.status===200){{
-          this.stopMsg='Session stopped.';
-          this.stopOk=true;
-          await this.pollSlot();
-          await this.loadHistory();
-          this.currentOperator = '';
-        }}else{{
-          this.stopMsg='Error: '+(d.detail||d.message||r.status);
-          this.stopOk=false;
-        }}
-      }}catch(e){{
-        this.stopMsg='Could not reach slot API. Is the system running?';
-        this.stopOk=false;
-      }}
-      this.stopping=false;
-      setTimeout(()=>{{this.stopMsg='';}}, 5000);
-    }},
-
-    init(){{
-      this.pollSlot();
-      this.loadHistory();
-      setInterval(()=>this.pollSlot(),   3000);
-      setInterval(()=>this.loadHistory(), 8000);
-    }}
-  }};
-}}
-</script>
-</body>
-</html>
-"""
