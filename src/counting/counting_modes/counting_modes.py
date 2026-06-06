@@ -117,7 +117,6 @@ def process_frame_dual(
     lineA_full,
     lineB_roi,
     lineB_full,
-    slot_mgr=None,
 ):
     mode = args.dual_mode
     _update_counts_dual_for_frame(
@@ -135,7 +134,6 @@ def process_frame_dual(
         lineA_full=lineA_full,
         lineB_roi=lineB_roi,
         lineB_full=lineB_full,
-        slot_mgr=slot_mgr,
     )
 
 

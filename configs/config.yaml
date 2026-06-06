@@ -46,6 +46,7 @@ runtime:
   playback_speed: 1.0                # how fast to play relative to source
   autoskip: false                     # enable autoskip behavior when lagging
   max_lag_s: 0.75                    # if behind by > this, autoskip policy kicks in
+  reconnect_delay: 5.0                # wait time (in seconds) before trying to reconnect to RTSP stream on failure
 
   # pacing tuning
   sync_jitter_allowance_s: 0.02      # small positive jitter allowed before sleeping

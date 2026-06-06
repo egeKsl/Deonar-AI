@@ -14,9 +14,6 @@ from src.utils.logger import log
 from src.display.webrtc_server import WebRTCServer
 import queue as std_queue
 
-from src.slots.slot_manager import SlotManager
-from src.slots.api.server import start_slot_api_if_enabled
-
 from pathlib import Path
 
 
@@ -72,7 +69,7 @@ def _create_capture_thread(
             capture_queue,
             stop_event,
             cap_backend=cap_backend,
-            reconnect_delay=float(getattr(args, "reconnect_delay", 3.0)),
+            reconnect_delay=float(getattr(args, "reconnect_delay", 5.0)),
             metrics=metrics,
         )
         log.debug("RUNNER", "Starting capture thread...")
@@ -291,7 +288,6 @@ def _monitor_threads(
     pacer,
     infer,
     display,
-    slot_api,
     capture_queue,
     pacing_out_q,
     result_queue,
@@ -318,7 +314,6 @@ def _monitor_threads(
         "pacer": None,
         "infer": None,
         "display": None,
-        "slot_api": None,
     }
     # track whether we've already emitted an error for a dead thread (to avoid spam)
     error_reported = {
@@ -326,7 +321,6 @@ def _monitor_threads(
         "pacer": False,
         "infer": False,
         "display": False,
-        "slot_api": False,
     }
 
     last_monitor = 0.0
@@ -372,14 +366,10 @@ def _monitor_threads(
                             else False
                         )
 
-                    def is_slot_api_alive():
-                        return slot_api.is_alive() if slot_api else False
-
                     cap_alive = is_capture_alive()
                     pacer_alive = is_pacer_alive()
                     inf_alive = is_infer_alive()
                     disp_alive = is_disp_alive()
-                    slot_api_alive = is_slot_api_alive()
 
                     # Only log queue utilization every 5 seconds to avoid spamming
                     if now - last_queue_log >= 5.0:
@@ -491,7 +481,6 @@ def _monitor_threads(
                     check_and_report("pacer", pacer_alive)
                     check_and_report("infer", inf_alive)
                     check_and_report("display", disp_alive)
-                    check_and_report("slot_api", slot_api_alive)
                 except Exception as e:
                     log.error(
                         "RUNNER-MONITOR", f"Monitor error (collecting status): {e}"
@@ -601,8 +590,6 @@ def _cleanup(
     capture,
     infer,
     display,
-    slot_manager,
-    slot_api,
     injected,
     injected_csvs,
     stop_event,
@@ -654,23 +641,6 @@ def _cleanup(
             webrtc_server.close()
         except Exception:
             log.debug("RUNNER", "Failed to close WebRTCServer", exc_info=True)
-
-    # --------------------------------------------------
-    # Slot cleanup (abort if active)
-    # --------------------------------------------------
-    if slot_manager and slot_manager.is_slot_active():
-        log.warn("SLOT", "Engine stopping with ACTIVE slot — aborting")
-
-        try:
-            slot_manager.abort_active_slot_if_any()
-        except Exception as e:
-            log.error("SLOT", f"Failed to abort active slot cleanly: {e}")
-
-    if slot_api:
-        try:
-            slot_api.stop()
-        except Exception as e:
-            log.debug("RUNNER", f"Failed to stop Slot API cleanly: {e}")
 
     log.info("RUNNER", "Threaded runner stopped")
 
@@ -817,70 +787,9 @@ def run_threaded(args):
     if not vision_ready:
         log.error("RUNNER", "Vision system did not become ready — slots disabled")
 
-    if slots_enabled and vision_ready:
-        try:
-            if slots_enabled:
-                # Slots output directory is required when slot system is enabled.
-                slots_dir_raw = getattr(args, "csv_slots_dir", None)
-                if not slots_dir_raw:
-                    log.error(
-                        "RUNNER",
-                        "Slots enabled but slots directory is not configured "
-                        "(expected args.csv_slots_dir).",
-                    )
-                    raise ValueError("Missing slots output directory for slot system")
-
-                slot_manager = SlotManager(
-                    slots_dir=Path(slots_dir_raw),
-                    run_id=getattr(args, "run_id", None),
-                    source=getattr(args, "source", None),
-                    global_count_supplier=get_global_count,
-                )
-
-                # Register display callbacks before exposing Slot API to avoid
-                # races where API starts/stop slots before recorder callbacks exist.
-                if display is not None:
-                    slot_manager.register_on_slot_start(display.on_slot_start)
-                    slot_manager.register_on_slot_stop(display.on_slot_stop)
-                    slot_manager.register_on_slot_abort(display.on_slot_abort)
-                    log.debug(
-                        "RUNNER",
-                        "Slot lifecycle callbacks registered with DisplayWorker",
-                    )
-
-                # Slot API runtime config is intentionally minimal:
-                # host/port only; enablement is controlled by slots_enabled + vision_ready.
-                slot_api_cfg = {
-                    "runtime": {
-                        "slot_api": {
-                            "host": getattr(args, "slot_api_host", "127.0.0.1"),
-                            "port": int(getattr(args, "slot_api_port", 8090)),
-                        }
-                    }
-                }
-                slot_api = start_slot_api_if_enabled(slot_api_cfg, slot_manager)
-
-                if slot_api:
-                    log.info(
-                        "RUNNER",
-                        f"Slot API active at http://{slot_api.host}:{slot_api.port}",
-                    )
-                else:
-                    log.warn("RUNNER", "Slot API was enabled but did not start")
-
-                if slot_manager is not None:
-                    injected["slot_manager"] = slot_manager
-                    log.debug(
-                        "RUNNER",
-                        "SlotManager initialized and injected into DisplayWorker context",
-                    )
-            else:
-                log.info("RUNNER", "Slot system disabled (runtime.slots_enabled=false)")
-        except Exception as e:
-            log.error("RUNNER", f"Failed to initialize Slot system: {e}")
-
-    if webrtc_server and slot_manager:
-        webrtc_server._slot_manager = slot_manager  # inject slot manager reference for WebRTCServer's /health endpoint
+    # Slot system disabled (removed)
+    slot_manager = None
+    slot_api = None
 
     # ── Wire live status provider into WebRTC server ──────────────────────────
     # Reads only in-memory values; zero pipeline overhead.
@@ -921,7 +830,7 @@ def run_threaded(args):
                     "pacer":    _alive(pacer._thread) if (pacer and hasattr(pacer, "_thread")) else False,
                     "infer":    _alive(infer),
                     "display":  _alive(display),
-                    "slot_api": _alive(slot_api) if slot_api else None,
+                    "slot_api": False,
                 }
             except Exception:
                 status["threads"] = {}
@@ -950,12 +859,7 @@ def run_threaded(args):
         except Exception as e:
             log.warn("RUNNER", f"Failed to set status provider: {e}")
 
-        # Pass the actual configured slot API port so /slots page uses the right URL
-        try:
-            configured_slot_port = int(getattr(args, "slot_api_port", 8090))
-            webrtc_server.set_slot_api_port(configured_slot_port)
-        except Exception as e:
-            log.warn("RUNNER", f"Failed to set slot API port on WebRTC server: {e}")
+        pass
 
     # --------------------------------------------------
     # 7) Monitor + graceful teardown
@@ -965,7 +869,6 @@ def run_threaded(args):
         pacer,
         infer,
         display,
-        slot_api,
         capture_queue,
         pacing_out_q,
         result_queue,
@@ -979,8 +882,6 @@ def run_threaded(args):
         capture,
         infer,
         display,
-        slot_manager,
-        slot_api,
         injected,
         injected_csvs,
         stop_event,

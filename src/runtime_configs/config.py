@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Optional, Tuple, Union
 from datetime import datetime
 import re
+import os
 
 # Try to use project logger if available; otherwise fallback to print
 try:
@@ -267,6 +268,12 @@ def build_runtime_cfg_from_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     stride = _as_int(runtime.get("stride"), 1, minv=1, name="stride")
     no_roi = _as_bool(runtime.get("no_roi"), False)
     no_full = _as_bool(runtime.get("no_full"), False)
+    reconnect_delay = _as_float(
+        runtime.get("reconnect_delay"),
+        5.0,
+        minv=0.1,
+        name="reconnect_delay"
+    )
 
     return {
         "sync": sync,
@@ -284,6 +291,7 @@ def build_runtime_cfg_from_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "stride": stride,
         "no_roi": no_roi,
         "no_full": no_full,
+        "reconnect_delay": reconnect_delay,
     }
 
 
@@ -591,17 +599,29 @@ def load_config(
         raw_weights = (
             cfg["paths"].get("weights") if isinstance(cfg["paths"], dict) else None
         )
-        raw_source = (
-            cfg["paths"].get("source") if isinstance(cfg["paths"], dict) else None
-        )
-
-        # if fallback to .env, look into legacy_env keys
         if raw_weights is None and "legacy_env" in cfg:
             raw_weights = cfg["legacy_env"].get("WEIGHTS")
-        if raw_source is None and "legacy_env" in cfg:
-            raw_source = cfg["legacy_env"].get("SOURCE")
-
         weights = _as_str(raw_weights, name="WEIGHTS")
+
+        # Dynamically read source from environment variables first,
+        # checking both "VIDEO_SOURCE" and "SOURCE" as requested.
+        env_source = os.environ.get("VIDEO_SOURCE") or os.environ.get("SOURCE")
+        if env_source is not None:
+            raw_source = env_source
+            log.info("CONFIG", f"Using SOURCE from environment variable: '{raw_source}'")
+        else:
+            # Fallback to YAML configuration (checking both video_source and source)
+            raw_source = (
+                cfg["paths"].get("video_source") or cfg["paths"].get("source")
+                if isinstance(cfg["paths"], dict)
+                else None
+            )
+            # if fallback to legacy env (.env file), look into legacy_env keys
+            if raw_source is None and "legacy_env" in cfg:
+                raw_source = (
+                    cfg["legacy_env"].get("VIDEO_SOURCE") or cfg["legacy_env"].get("SOURCE")
+                )
+
         source = _as_str(raw_source, name="SOURCE")
         if not weights:
             raise ValueError("WEIGHTS (model path) is required in config.")
@@ -609,7 +629,19 @@ def load_config(
             raise ValueError("SOURCE (input path/rtsp) is required in config.")
         # Resolve bare names
         weights_res = _resolve_path(weights, str(base_dir / "models"))
-        source_res = _resolve_path(source, str(base_dir / "data"))
+
+        # Check if source is a live feed (RTSP URL, RTMP, HTTP/S, or webcam digit)
+        source_is_live = False
+        if source:
+            s_clean = source.strip().lower()
+            if s_clean.startswith(("rtsp://", "rtmp://", "http://", "https://", "rtsp:")) or s_clean.isdigit():
+                source_is_live = True
+
+        if source_is_live:
+            source_res = source
+            log.info("CONFIG", f"Detected live source (RTSP/Webcam): {source_res}")
+        else:
+            source_res = _resolve_path(source, str(base_dir / "data"))
     except Exception as e:
         log.error("CONFIG", f"Missing/invalid paths: {e}")
         raise
@@ -620,7 +652,15 @@ def load_config(
     # ---- Run ID (single source of truth) ----
     now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    source_name = Path(source_res).stem
+    # Generate a safe run ID / folder name prefix
+    if source_is_live:
+        source_name = "live_stream"
+        if isinstance(source_res, str):
+            parts = [p for p in re.split(r"[/:@?=&]", source_res) if p]
+            if len(parts) > 1:
+                source_name = f"live_{parts[-1]}"
+    else:
+        source_name = Path(source_res).stem
     source_name = _sanitize_name(source_name)
 
     run_id = f"{now}_{source_name}"
@@ -695,14 +735,7 @@ def load_config(
 
     # --------- Slots Manager knobs ---------
     # runtime
-    slots_enabled = _as_bool(
-        (
-            run.get("slots_enabled")
-            if used_yaml
-            else cfg.get("legacy_env", {}).get("SLOTS_ENABLED")
-        ),
-        False,
-    )
+    slots_enabled = False
 
     slot_api_cfg = run.get("slot_api", {})
     slot_api_host = _as_str(slot_api_cfg.get("host"), default="127.0.0.1")
@@ -739,6 +772,15 @@ def load_config(
         ),
         1.0,
         minv=0.01,
+    )
+    runtime_reconnect_delay = _as_float(
+        (
+            run.get("reconnect_delay")
+            if used_yaml
+            else cfg.get("legacy_env", {}).get("RECONNECT_DELAY")
+        ),
+        5.0,
+        minv=0.1,
     )
     runtime_cap_qsize = _as_int(
         (
@@ -1385,6 +1427,7 @@ def load_config(
             "no_full": runtime_no_full,
             "save_out": runtime_save_out,
             "progress_every": runtime_progress_every,
+            "reconnect_delay": runtime_reconnect_delay,
         },
         "paths": {
             "weights": weights_res,
@@ -1533,6 +1576,7 @@ def load_config(
         quiet=CONFIG["runtime"]["quiet"],
         verbose=CONFIG["runtime"]["verbose"],
         live=CONFIG["runtime"]["live"],
+        reconnect_delay=CONFIG["runtime"]["reconnect_delay"],
         # slots
         slots_enabled=CONFIG["runtime"]["slots_enabled"],
         slot_api_host=CONFIG["runtime"]["slot_api"]["host"],

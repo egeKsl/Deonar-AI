@@ -112,11 +112,6 @@ class WebRTCServer:
 
         # Control queue (to DisplayWorker / Runner)
         self._control_queue: Optional[std_queue.Queue] = None
-        self._slot_manager = None
-        # Cache slot-state snapshots to avoid hitting SlotManager on every browser poll.
-        self._slot_state_cache = {"ts": 0.0, "data": {"active": False, "slot": None}}
-        self._slot_state_cache_ttl_s = 2.0
-
         # ── Status provider (set by runner after pipeline is ready) ──────────
         # Callable: () -> dict with keys: up, down, total, infer_fps, e2e_fps,
         #   threads {capture,pacer,infer,display,slot_api: bool},
@@ -124,9 +119,6 @@ class WebRTCServer:
         self._status_provider = None
         self._status_cache = {"ts": 0.0, "data": {}}
         self._status_cache_ttl_s = 1.5  # slightly shorter than poll interval
-
-        # Slot API port — set from config via set_slot_api_port(), defaults to 8090
-        self._slot_api_port: int = 8090
 
         log.debug(
             "WEBRTC",
@@ -156,10 +148,7 @@ class WebRTCServer:
         self._status_provider = fn
         log.debug("WEBRTC", "Status provider set")
 
-    def set_slot_api_port(self, port: int) -> None:
-        """Store the actual slot API port so the /slots page uses the correct URL."""
-        self._slot_api_port = int(port)
-        log.debug("WEBRTC", f"Slot API port set to {self._slot_api_port}")
+
 
     def publish(self, frame: np.ndarray) -> None:
         """
@@ -234,7 +223,6 @@ class WebRTCServer:
     async def _init_app(self):
         app = web.Application()
         app["server"] = self  # allow handlers to access server
-        app["slot_manager"] = self._slot_manager
 
         app.router.add_get("/", self._index_handler)
         app.router.add_post("/offer", self._offer_handler)
@@ -245,7 +233,6 @@ class WebRTCServer:
         app.router.add_get("/status", self._status_handler)
         app.router.add_get("/slot-history", self._slot_history_handler)
         app.router.add_get("/dashboard", self._dashboard_handler)
-        app.router.add_get("/slots", self._slots_handler)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -388,35 +375,8 @@ class WebRTCServer:
         except Exception:
             return web.json_response({"ok": False, "error": "health_failed"})
 
-    def _get_slot_state_cached(self):
-        """
-        Return slot state with TTL caching to reduce repeated SlotManager access
-        under frequent browser polling.
-        """
-        now = time.monotonic()
-        last_ts = float(self._slot_state_cache.get("ts", 0.0))
-        if (now - last_ts) < self._slot_state_cache_ttl_s:
-            return self._slot_state_cache.get("data", {"active": False, "slot": None})
-
-        slot_mgr = self._slot_manager
-        data = {"active": False, "slot": None}
-        try:
-            if slot_mgr is not None:
-                # Lightweight public snapshot only.
-                data = slot_mgr.get_public_state()
-        except Exception:
-            # Keep endpoint resilient; never break WebRTC loop for slot-state failures.
-            data = {"active": False, "slot": None}
-
-        self._slot_state_cache["ts"] = now
-        self._slot_state_cache["data"] = data
-        return data
-
     async def _slot_state_handler(self, request: web.Request):
-        try:
-            return web.json_response(self._get_slot_state_cached())
-        except Exception:
-            return web.json_response({"active": False, "slot": None})
+        return web.json_response({"active": False, "slot": None})
 
     def _get_status_cached(self) -> dict:
         """
@@ -448,15 +408,8 @@ class WebRTCServer:
             return web.json_response({}, status=200)
 
     async def _slot_history_handler(self, request: web.Request):
-        """GET /slot-history — completed slots from SlotManager + disk CSVs."""
-        try:
-            history = []
-            slot_mgr = self._slot_manager
-            if slot_mgr is not None and hasattr(slot_mgr, "get_history"):
-                history = slot_mgr.get_history()
-            return web.json_response({"history": history})
-        except Exception:
-            return web.json_response({"history": []})
+        """GET /slot-history — completed slots (disabled, returns empty)."""
+        return web.json_response({"history": []})
 
     async def _dashboard_handler(self, request: web.Request):
         """GET /dashboard — live monitoring dashboard page."""
@@ -467,19 +420,6 @@ class WebRTCServer:
         except Exception:
             return web.Response(
                 text="<html><body><h2>Dashboard unavailable</h2></body></html>",
-                content_type="text/html",
-                status=500,
-            )
-
-    async def _slots_handler(self, request: web.Request):
-        """GET /slots — slot management console page."""
-        try:
-            from src.display.webrtc_page import build_slots_html
-            html = build_slots_html(slot_api_port=self._slot_api_port)
-            return web.Response(text=html, content_type="text/html")
-        except Exception:
-            return web.Response(
-                text="<html><body><h2>Slots console unavailable</h2></body></html>",
                 content_type="text/html",
                 status=500,
             )
