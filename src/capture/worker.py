@@ -18,6 +18,7 @@ your original logic and behavior.
 from __future__ import annotations
 
 import cv2
+import os
 import time
 import threading
 import queue
@@ -84,6 +85,13 @@ class ThreadedVideoCapture(threading.Thread):
         """
         try:
             src = self.source
+            # Set timeout and transport option for RTSP streams before opening VideoCapture
+            if isinstance(src, str) and src.strip().lower().startswith(("rtsp://", "rtsp:")):
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000"
+                log.info(
+                    "CAPTURE-THREAD",
+                    "Configuring FFMPEG capture options for RTSP: TCP transport, 5s timeout"
+                )
             if isinstance(self.source, str) and self.source.isdigit():
                 src = int(self.source)
 

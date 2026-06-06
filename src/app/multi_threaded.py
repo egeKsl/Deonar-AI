@@ -69,7 +69,7 @@ def _create_capture_thread(
             capture_queue,
             stop_event,
             cap_backend=cap_backend,
-            reconnect_delay=float(getattr(args, "reconnect_delay", 3.0)),
+            reconnect_delay=float(getattr(args, "reconnect_delay", 5.0)),
             metrics=metrics,
         )
         log.debug("RUNNER", "Starting capture thread...")
